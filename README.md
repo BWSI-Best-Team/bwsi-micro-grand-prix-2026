@@ -4,7 +4,7 @@ This codebase contains a controller for the BWSI 2026 Micro Grand Prix Pre-Comp
 
 ## Calendar
 
-> **Today: 3/21** — 9 days until BWSI application deadline.
+> **Today: 3/22** — 8 days until BWSI application deadline.
 
 | Date | Event | Description |
 | :--- | :--- | :--- |
