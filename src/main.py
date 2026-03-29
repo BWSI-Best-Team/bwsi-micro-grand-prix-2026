@@ -1,6 +1,6 @@
 import sys
 
-sys.path.insert(0, '../../library')
+sys.path.insert(0, '../library')
 import racecar_core
 rc = racecar_core.create_racecar()
 
