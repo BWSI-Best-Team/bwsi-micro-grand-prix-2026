@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import Any
 
 import racecar_utils as rc_utils
+from controller_config import ControllerConfig, load_controller_config
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class RacecarState(Enum):
 class GrandPrixController:
     def __init__(self, rc: Any) -> None:
         self._rc = rc
+        self._config: ControllerConfig = load_controller_config()
         self._frame_count = 0
         self._mode = RacecarState.IDLE
         self._speed = 0.0
@@ -42,18 +44,15 @@ class GrandPrixController:
         self._speed = 0.0
         self._angle = 0.0
         self._sensors = SensorState()
-
-        self._rc.set_update_slow_time(0.5)
-        self._rc.drive.set_max_speed(0.25)
         self._rc.drive.stop()
-
-        self._rc.drive.set_max_speed(1.0)
 
         print(
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
 
     def update(self) -> None:
+        self._rc.drive.set_max_speed(1.0) # Located here per regulation
+
         self._frame_count += 1
         self._sample_sensors()
         self._update_mode()
@@ -64,6 +63,9 @@ class GrandPrixController:
         self._rc.drive.set_speed_angle(self._speed, self._angle)
 
     def update_slow(self) -> None: # For logging only
+        if not self._config.print_log:
+            return
+
         print(
             "[status] "
             f"frame={self._frame_count} "
