@@ -1,3 +1,4 @@
 {
-  "print_log": true
+  "print_log": true,
+  "show_visualizer": true
 }

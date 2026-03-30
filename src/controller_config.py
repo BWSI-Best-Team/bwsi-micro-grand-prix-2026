@@ -12,6 +12,7 @@ class ControllerConfig:
     max_speed: float = 0.25
     blocked_distance_cm: float = 60.0
     print_log: bool = True
+    show_visualizer: bool = False
 
 
 def load_controller_config() -> ControllerConfig:
@@ -34,6 +35,7 @@ def load_controller_config() -> ControllerConfig:
 def _apply_overrides(config: ControllerConfig, overrides: dict[str, Any]) -> None:
     valid_keys = {
         "print_log",
+        "show_visualizer",
     }
 
     unknown_keys = set(overrides) - valid_keys
