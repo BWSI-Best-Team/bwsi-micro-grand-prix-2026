@@ -8,6 +8,7 @@ import cv2 as cv
 import numpy as np
 from controller_config import ControllerConfig, load_controller_config
 from input_manager import InputManager
+from pose_estimator import PoseEstimator
 import racecar_utils as rc_utils
 
 
@@ -40,6 +41,7 @@ class GrandPrixController:
         self._speed = 0.0
         self._angle = 0.0
         self._inputs = InputManager(rc)
+        self._pose_estimator = PoseEstimator()
 
     def start(self) -> None:
         self._frame_count = 0
@@ -47,6 +49,7 @@ class GrandPrixController:
         self._speed = 0.0
         self._angle = 0.0
         self._inputs.reset()
+        self._pose_estimator.reset()
         self._rc.drive.stop()
         self._create_visualizer_windows()
 
@@ -59,6 +62,12 @@ class GrandPrixController:
 
         self._frame_count += 1
         self._inputs.update()
+        self._pose_estimator.update(
+            self._inputs.state.imu_accel_right_mps2,
+            self._inputs.state.imu_accel_forward_mps2,
+            self._inputs.state.imu_yaw_rate_rad_per_s,
+            self._rc.get_delta_time(),
+        )
         self._show_visualizer()
         self._update_mode()
 
@@ -77,7 +86,8 @@ class GrandPrixController:
             f"mode={self._mode.name} "
             f"cmd=({self._speed:.2f},{self._angle:.2f}) "
             f"front={self._inputs.state.front_distance_cm:.1f}cm "
-            f"color={'yes' if self._inputs.state.color_image is not None else 'no'}"
+            f"color={'yes' if self._inputs.state.color_image is not None else 'no'} "
+            f"location={self._pose_estimator.pose.x_m}, {self._pose_estimator.pose.y_m}"
         )
 
     def _update_mode(self) -> None:
