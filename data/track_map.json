@@ -1,0 +1,11 @@
+{
+  "resolution_m_per_px": 0.05,
+  "world_min_x_m": 129.24053441611727,
+  "world_max_x_m": 339.23422375569777,
+  "world_min_z_m": 177.27183589528877,
+  "world_max_z_m": 328.26862144470215,
+  "width_px": 4200,
+  "height_px": 3020,
+  "wall_count": 49,
+  "note": "Grid cell (row, col) maps to world (z, x). x_m = world_min_x_m + col * resolution. z_m = world_max_z_m - row * resolution."
+}
