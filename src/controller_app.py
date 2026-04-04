@@ -130,7 +130,11 @@ class GrandPrixController:
         cv.resizeWindow(self.LIDAR_WINDOW, *self.LIDAR_WINDOW_SIZE)
 
     def _make_lidar_view(self) -> np.ndarray:
-        # LiDAR is a 1D distance scan, so scale it into a thicker strip for display.
+        # Reconstruct field view from 1D array
+        height = self.LIDAR_WINDOW_SIZE[1]
+        width = self.LIDAR_WINDOW_SIZE[0]
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+
         samples = np.nan_to_num(
             self._inputs.state.lidar_scan,
             nan=0.0,
@@ -138,5 +142,20 @@ class GrandPrixController:
             neginf=0.0,
         )
         samples = np.clip(samples, 0.0, self.LIDAR_DISPLAY_MAX_CM)
-        row = (255.0 * samples / self.LIDAR_DISPLAY_MAX_CM).astype(np.uint8)
-        return np.repeat(row[np.newaxis, :], self.LIDAR_WINDOW_SIZE[1], axis=0)
+
+        center_x = width // 2
+        center_y = height // 2
+        max_radius_px = min(width, height) // 2 - 10
+        angle_step_rad = 2.0 * np.pi / len(samples)
+
+        for index, distance_cm in enumerate(samples):
+            if distance_cm > 0.0: # Sanitize
+                angle_rad = index * angle_step_rad
+                radius_px = distance_cm / self.LIDAR_DISPLAY_MAX_CM * max_radius_px
+                col = int(center_x + radius_px * np.sin(angle_rad))
+                row = int(center_y - radius_px * np.cos(angle_rad))
+
+                if 0 <= row < height and 0 <= col < width:
+                    cv.circle(image, (col, row), 2, (0, 0, 255), -1)
+
+        return image
