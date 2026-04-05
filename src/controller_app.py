@@ -1,21 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any
 
 import cv2 as cv
 import numpy as np
 from controller_config import ControllerConfig, load_controller_config
-from input_manager import InputManager
-from pose_estimator import PoseEstimator
+from perception.input_manager import InputManager
+from perception.pose_estimator import PoseEstimator
+from control.path_tracker import PurePursuitTracker
+from util.track_map import TrackMap
+from util.types import DriveCommand
+from planning.global_planner.global_path import compute_global_path
 import racecar_utils as rc_utils
 
 
-@dataclass(slots=True)
-class DriveCommand:
-    speed: float = 0.0
-    angle: float = 0.0
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+UNITY_TO_M = 0.10 # Unity unit dm * 10 = cm
+GOAL_XY = (14.08, 23.82) # meters
 
 
 class RacecarState(Enum):
@@ -42,6 +46,11 @@ class GrandPrixController:
         self._angle = 0.0
         self._inputs = InputManager(rc)
         self._pose_estimator = PoseEstimator()
+        
+        self._path_track_map = TrackMap.load(DATA_DIR)
+        self._tracker = None # PurePursuitTracker
+
+        self._path_preview_img = None
 
     def start(self) -> None:
         self._frame_count = 0
@@ -56,6 +65,29 @@ class GrandPrixController:
         print(
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
+
+        # set start position
+#        self._rc.physics.set_simulator_not_official_pose(300.0, 0.0, 220.0, -np.pi / 2.0)
+
+        # Global planing, now not using config but can using config file in the future, cause there are only two start points
+        try:
+            # Get position from API, needs to change to ML odom
+            pose = self._rc.physics.get_simulator_not_official_pose()
+            start_xy = (float(pose[0]) * UNITY_TO_M, float(pose[2]) * UNITY_TO_M)
+        except AttributeError:
+            print("[WARNING] Simulator pose API not available, using default start")
+            start_xy = (17.68, 24.80)
+        print(f"[INFO] Gobal Planner: {start_xy} -> {GOAL_XY}")
+
+        waypoints = compute_global_path(self._path_track_map, start_xy, GOAL_XY)
+        self._tracker = PurePursuitTracker(
+            waypoints,
+            cruise_speed=1.0,
+            curve_slowdown=0.5,
+            curve_horizon_m=4.0,
+        )
+        print(f"[INFO] Global path: {len(waypoints)} waypoints")
+        self._save_path_preview(self._path_track_map, waypoints, start_xy)
 
     def update(self) -> None:
         self._rc.drive.set_max_speed(1.0) # Located here per regulation
@@ -80,15 +112,66 @@ class GrandPrixController:
         if not self._config.print_log:
             return
 
+        try:
+            pose = self._rc.physics.get_simulator_not_official_pose()
+            yaw_ours = np.pi / 2.0 - float(pose[3])
+            loc = f"gt=({pose[0]*UNITY_TO_M:.2f},{pose[2]*UNITY_TO_M:.2f},{yaw_ours:.2f})"
+        except AttributeError:
+            p = self._pose_estimator.pose
+            loc = f"imu=({p.x_m:.2f},{p.y_m:.2f},{p.yaw_rad:.2f})"
         print(
             "[status] "
             f"frame={self._frame_count} "
             f"mode={self._mode.name} "
             f"cmd=({self._speed:.2f},{self._angle:.2f}) "
             f"front={self._inputs.state.front_distance_cm:.1f}cm "
-            f"color={'yes' if self._inputs.state.color_image is not None else 'no'} "
-            f"location={self._pose_estimator.pose.x_m}, {self._pose_estimator.pose.y_m}"
+            f"{loc}"
         )
+
+    def _save_path_preview(self, track_map, path: list, start_xy) -> None:
+        """Render the planned global path, save + open it in a window."""
+        canvas = cv.cvtColor(track_map.grid, cv.COLOR_GRAY2BGR)
+        for i in range(len(path) - 1):
+            r0, c0 = track_map.world_to_grid(path[i].x_m, path[i].y_m)
+            r1, c1 = track_map.world_to_grid(path[i + 1].x_m, path[i + 1].y_m)
+            cv.line(canvas, (c0, r0), (c1, r1), (255, 255, 0), 3)
+        sr, sc = track_map.world_to_grid(*start_xy)
+        gr, gc = track_map.world_to_grid(*GOAL_XY)
+        cv.circle(canvas, (sc, sr), 15, (0, 255, 0), -1)
+        cv.circle(canvas, (gc, gr), 15, (0, 0, 255), -1)
+        scale = 1400 / canvas.shape[1]
+        preview = cv.resize(
+            canvas,
+            (int(canvas.shape[1] * scale), int(canvas.shape[0] * scale)),
+            interpolation=cv.INTER_AREA,
+        )
+        tmp_dir = Path(__file__).resolve().parents[1] / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        out_path = tmp_dir / "planned_path_preview.png"
+        cv.imwrite(str(out_path), preview)
+        self._path_preview_img = preview
+        print(f"[INFO] Path preview: {out_path}")
+
+    def _show_path_window(self) -> None:
+        """Show the planned path (and live car pose) in an OpenCV window."""
+        if getattr(self, "_path_preview_img", None) is None:
+            return
+        canvas = self._path_preview_img.copy()
+        # add car position
+        try:
+            pose = self._rc.physics.get_simulator_not_official_pose()
+            x_m = float(pose[0]) * UNITY_TO_M
+            y_m = float(pose[2]) * UNITY_TO_M
+            # world -> pixels
+            tm = self._path_track_map
+            orig_r, orig_c = tm.world_to_grid(x_m, y_m)
+            scale = canvas.shape[1] / tm.width_px
+            pr = int(orig_r * scale)
+            pc = int(orig_c * scale)
+            cv.circle(canvas, (pc, pr), 8, (0, 200, 255), -1)  # orange dot
+        except Exception:
+            pass
+        cv.imshow("BWSI Path", canvas)
 
     def _update_mode(self) -> None:
         if self._inputs.state.color_image is None:
@@ -97,11 +180,33 @@ class GrandPrixController:
             self._mode = RacecarState.RUNNING
 
     def _compute_command(self) -> DriveCommand:
-        # TODO: add real controller when perception and policy are ready.
-        return DriveCommand(speed=1.0, angle=0.0)
+        if self._tracker is None:
+            return DriveCommand(speed=0.0, angle=0.0)
+        # use sim patch if available, else IMU estimator
+        try:
+            pose = self._rc.physics.get_simulator_not_official_pose()
+        except AttributeError:
+            p = self._pose_estimator.pose
+            x_m, y_m, yaw = p.x_m, p.y_m, p.yaw_rad
+        else:
+            # Unity yaw=0 north, left-handed
+            # Ours yaw=0 east, right-handed
+            x_m = float(pose[0]) * UNITY_TO_M
+            y_m = float(pose[2]) * UNITY_TO_M
+            yaw = np.pi / 2.0 - float(pose[3])
+        cmd = self._tracker.update(x_m, y_m, yaw)
+        if self._tracker.finished:
+            return DriveCommand(speed=0.0, angle=0.0)
+        # angle > 0 pure pursuit left, BWSI right
+        return DriveCommand(speed=cmd.speed, angle=-cmd.angle)
 
     def _show_visualizer(self) -> None:
+        # show path window
+        if self._path_preview_img is not None:
+            self._show_path_window()
+
         if not self._config.show_visualizer:
+            cv.waitKey(1)
             return
 
         if self._inputs.state.color_image is not None:

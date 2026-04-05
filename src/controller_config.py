@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-@dataclass(slots=True)
+@dataclass
 class ControllerConfig:
     update_slow_time_s: float = 0.5
     max_speed: float = 0.25
