@@ -4,4 +4,8 @@ Vendored Python dependencies. Due to runtime restrictions, all dependencies must
 - Add the package directory itself, not a wheel or an environment export.
 
 Current Dependencies:
-- N/A
+- `onnxruntime-gpu 1.19.2` for Python 3.9 in `vendor/onnxruntime_gpu_py39/`
+- `onnxruntime 1.19.2` for Python 3.9 in `vendor/onnxruntime_cpu_py39/`
+
+Setup:
+- Run `scripts/vendor_onnxruntime.sh` to fetch and unpack both pinned wheels.
