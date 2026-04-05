@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VENDOR_DIR = PROJECT_ROOT / "vendor"
 GPU_VENDOR_DIR = VENDOR_DIR / "onnxruntime_gpu_py39"
 CPU_VENDOR_DIR = VENDOR_DIR / "onnxruntime_cpu_py39"
