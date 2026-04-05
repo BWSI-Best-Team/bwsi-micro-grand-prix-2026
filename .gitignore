@@ -1,3 +1,9 @@
 log.csv
 __pycache__
 .DS_Store
+tools/
+vendor/onnxruntime_cpu_py39
+vendor/onnxruntime_gpu_py39
+lidar_samples*
+
+.python39
