@@ -6,7 +6,7 @@ from typing import Any
 import racecar_utils as rc_utils
 
 
-@dataclass(slots=True)
+@dataclass
 class InputState:
     color_image: Any = None
     depth_image: Any = None

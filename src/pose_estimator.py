@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-@dataclass(slots=True)
+@dataclass
 class Pose2D:
     x_m: float = 0.0
     y_m: float = 0.0

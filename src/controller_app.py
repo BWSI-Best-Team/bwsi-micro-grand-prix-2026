@@ -12,7 +12,7 @@ from pose_estimator import PoseEstimator
 import racecar_utils as rc_utils
 
 
-@dataclass(slots=True)
+@dataclass
 class DriveCommand:
     speed: float = 0.0
     angle: float = 0.0

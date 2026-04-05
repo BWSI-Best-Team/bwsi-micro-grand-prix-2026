@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Wall:
     x1_m: float
     z1_m: float
