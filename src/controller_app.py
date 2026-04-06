@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -10,17 +11,17 @@ from controller_config import ControllerConfig, load_controller_config
 from perception.input_manager import InputManager
 from perception.pose_estimator import PoseEstimator
 from control.path_tracker import PurePursuitTracker
+from control.stopper import Stopper
 from util.track_map import TrackMap
 from util.types import DriveCommand
-from planning.global_planner.global_path import compute_global_path
+from planning.global_planner.global_path import compute_global_path, compute_multi_segment_path, GlobalPathConfig
+from behavior.race_tree import build_race_tree, RaceContext
 import racecar_utils as rc_utils
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
-UNITY_TO_M = 0.10 # Unity unit dm * 10 = cm
-GOAL_XY = (14.08, 23.82) # meters
-
+from util.constants import *
 
 class RacecarState(Enum):
     IDLE = auto()
@@ -49,8 +50,14 @@ class GrandPrixController:
         
         self._path_track_map = TrackMap.load(DATA_DIR)
         self._tracker = None # PurePursuitTracker
+        self._bt = build_race_tree()
+        self._bt_ctx = RaceContext()
+        self._bt_ctx.stopper = Stopper()
+        self._bt_ctx.rc = rc
 
         self._path_preview_img = None
+        self._log_file = None
+        self._log_writer = None
 
     def start(self) -> None:
         self._frame_count = 0
@@ -66,6 +73,14 @@ class GrandPrixController:
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
 
+        # open log file
+        import csv
+        log_dir = Path(__file__).resolve().parents[1] / "tmp"
+        log_dir.mkdir(exist_ok=True)
+        self._log_file = open(log_dir / "run_log.csv", "w", newline="")
+        self._log_writer = csv.writer(self._log_file)
+        self._log_writer.writerow(["frame", "phase", "speed", "angle", "x", "y", "yaw", "v_fwd", "front_cm"])
+
         # set start position
 #        self._rc.physics.set_simulator_not_official_pose(300.0, 0.0, 220.0, -np.pi / 2.0)
 
@@ -77,17 +92,23 @@ class GrandPrixController:
         except AttributeError:
             print("[WARNING] Simulator pose API not available, using default start")
             start_xy = (17.68, 24.80)
-        print(f"[INFO] Gobal Planner: {start_xy} -> {GOAL_XY}")
-
-        waypoints = compute_global_path(self._path_track_map, start_xy, GOAL_XY)
+        # plan through all waypoints and smooth only once
+        points = [start_xy, GATE_ENTER_XY, GATE_EXIT_XY, GOAL_XY]
+        gate_cfg = GlobalPathConfig(inflate_m=0.25, corner_extra_m=0.35)
+        cfgs = [None, gate_cfg, None]  # default for seg1 and seg3, tighter for seg2
+        print(f"[INFO] Global Planner: {' -> '.join(str(p) for p in points)}")
+        waypoints = compute_multi_segment_path(self._path_track_map, points, cfgs)
         self._tracker = PurePursuitTracker(
             waypoints,
-            cruise_speed=1.0,
-            curve_slowdown=0.5,
-            curve_horizon_m=4.0,
+            cruise_speed=CRUISE_SPEED,
+            curve_slowdown=CURVE_SLOWDOWN,
+            curve_horizon_m=CURVE_HORIZON_M,
         )
         print(f"[INFO] Global path: {len(waypoints)} waypoints")
         self._save_path_preview(self._path_track_map, waypoints, start_xy)
+
+        # spin door location for behavior tree
+        self._bt_ctx.gate_xy = GATE_ENTER_XY
 
     def update(self) -> None:
         self._rc.drive.set_max_speed(1.0) # Located here per regulation
@@ -106,6 +127,18 @@ class GrandPrixController:
         command = self._compute_command()
         self._speed = command.speed
         self._angle = command.angle
+
+        # log every frame
+        if self._log_writer:
+            ctx = self._bt_ctx
+            self._log_writer.writerow([
+                self._frame_count, ctx.phase,
+                f"{self._speed:.3f}", f"{self._angle:.3f}",
+                f"{ctx.x:.3f}", f"{ctx.y:.3f}", f"{ctx.yaw:.3f}",
+                f"{ctx.v_fwd:.3f}",
+                f"{self._inputs.state.front_distance_cm:.1f}",
+            ])
+            self._log_file.flush()
         self._rc.drive.set_speed_angle(self._speed, self._angle)
 
     def update_slow(self) -> None: # For logging only
@@ -119,25 +152,28 @@ class GrandPrixController:
         except AttributeError:
             p = self._pose_estimator.pose
             loc = f"imu=({p.x_m:.2f},{p.y_m:.2f},{p.yaw_rad:.2f})"
+        phase_names = {1: "TO_GATE", 2: "PASS_GATE", 3: "TO_FINISH"}
+        phase = phase_names.get(self._bt_ctx.phase, "?")
         print(
-            "[status] "
-            f"frame={self._frame_count} "
-            f"mode={self._mode.name} "
+            f"[Phase {self._bt_ctx.phase}: {phase}] "
             f"cmd=({self._speed:.2f},{self._angle:.2f}) "
             f"front={self._inputs.state.front_distance_cm:.1f}cm "
             f"{loc}"
         )
 
-    def _save_path_preview(self, track_map, path: list, start_xy) -> None:
+    def _save_path_preview(self, track_map, path, start_xy) -> None:
         """Render the planned global path, save + open it in a window."""
         canvas = cv.cvtColor(track_map.grid, cv.COLOR_GRAY2BGR)
         for i in range(len(path) - 1):
             r0, c0 = track_map.world_to_grid(path[i].x_m, path[i].y_m)
             r1, c1 = track_map.world_to_grid(path[i + 1].x_m, path[i + 1].y_m)
             cv.line(canvas, (c0, r0), (c1, r1), (255, 255, 0), 3)
+        # points: green=start, yellow=gate, red=finish
         sr, sc = track_map.world_to_grid(*start_xy)
+        gatr, gatc = track_map.world_to_grid(*GATE_ENTER_XY)
         gr, gc = track_map.world_to_grid(*GOAL_XY)
         cv.circle(canvas, (sc, sr), 15, (0, 255, 0), -1)
+        cv.circle(canvas, (gatc, gatr), 15, (0, 255, 255), -1)
         cv.circle(canvas, (gc, gr), 15, (0, 0, 255), -1)
         scale = 1400 / canvas.shape[1]
         preview = cv.resize(
@@ -194,11 +230,27 @@ class GrandPrixController:
             x_m = float(pose[0]) * UNITY_TO_M
             y_m = float(pose[2]) * UNITY_TO_M
             yaw = np.pi / 2.0 - float(pose[3])
-        cmd = self._tracker.update(x_m, y_m, yaw)
-        if self._tracker.finished:
-            return DriveCommand(speed=0.0, angle=0.0)
-        # angle > 0 pure pursuit left, BWSI right
-        return DriveCommand(speed=cmd.speed, angle=-cmd.angle)
+
+        # behavior tree decides speed + angle
+        ctx = self._bt_ctx
+        ctx.tracker = self._tracker
+        ctx.x, ctx.y, ctx.yaw = x_m, y_m, yaw
+        ctx.lidar = self._inputs.state.lidar_scan
+        ctx.dt = max(self._rc.get_delta_time(), 0.001)
+        self._pose_estimator.update_speed_from_position(x_m, y_m, ctx.dt)
+        ctx.v_fwd = self._pose_estimator.speed_mps
+
+        # update last position
+        if hasattr(ctx, '_last_x'):
+            jump = math.hypot(x_m - ctx._last_x, y_m - ctx._last_y)
+            ctx._reset_detected = jump > 5.0
+        else:
+            ctx._reset_detected = False
+        ctx._last_x, ctx._last_y = x_m, y_m
+        ctx.speed, ctx.angle = 0.0, 0.0
+        self._bt.tick(ctx)
+
+        return DriveCommand(speed=ctx.speed, angle=ctx.angle)
 
     def _show_visualizer(self) -> None:
         # show path window

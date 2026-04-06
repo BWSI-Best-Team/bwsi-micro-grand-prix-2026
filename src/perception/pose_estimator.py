@@ -15,13 +15,31 @@ class Pose2D:
 class PoseEstimator:
     def __init__(self):
         self._pose = Pose2D()
+        self._last_x = None
+        self._last_y = None
+        self._speed_mps = 0.0
 
     @property
     def pose(self) -> Pose2D:
         return self._pose
-    
+
+    @property
+    def speed_mps(self) -> float:
+        return self._speed_mps
+
     def reset(self) -> None:
         self._pose = Pose2D()
+        self._last_x = None
+        self._last_y = None
+        self._speed_mps = 0.0
+
+    def update_speed_from_position(self, x_m, y_m, dt):
+        if self._last_x is not None and dt > 0:
+            dx = x_m - self._last_x
+            dy = y_m - self._last_y
+            self._speed_mps = math.hypot(dx, dy) / dt
+        self._last_x = x_m
+        self._last_y = y_m
 
     def update(self, x_accel: float, y_accel: float, yaw_accel: float, dt: float = 0.0) -> None:
         self._pose.yaw_rad += yaw_accel * dt

@@ -48,8 +48,20 @@ class TrackMap:
         return 0 <= row < self.height_px and 0 <= col < self.width_px
 
     # Inflate walls by inflate_radius_m via distance transform O(n)
-    def build_costmap(self, inflate_radius_m):
+    # corner_extra_m is extra inflation for sharp corners
+    def build_costmap(self, inflate_radius_m, corner_extra_m=0.0):
         radius_px = max(1.0, inflate_radius_m / self.resolution_m_per_px)
         free_mask = (self.grid == 0).astype(np.uint8)
         dist = cv.distanceTransform(free_mask, cv.DIST_L2, 5)
-        return np.where(dist < radius_px, np.uint8(255), np.uint8(0))
+        costmap = np.where(dist < radius_px, np.uint8(255), np.uint8(0))
+
+        if corner_extra_m > 0:
+            # detect sharp corners on walls
+            corners = cv.cornerHarris(self.grid, blockSize=5, ksize=3, k=0.04)
+            corner_mask = (corners > 0.01 * corners.max()).astype(np.uint8) * 255
+            extra_px = int(corner_extra_m / self.resolution_m_per_px)
+            k = 2 * extra_px + 1
+            corner_inflated = cv.dilate(corner_mask, np.ones((k, k), np.uint8))
+            costmap = np.where(corner_inflated > 0, np.uint8(255), costmap)
+
+        return costmap
