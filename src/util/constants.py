@@ -3,9 +3,14 @@
 UNITY_TO_M = 0.10 # Unity unit (dm) to meters
 
 # waypoints in meters
-GATE_ENTER_XY = (28.80, 24.95) # stop point before spin door
+START_XY = (17.68, 24.80)      # default start position
+GATE_ENTER_XY = (28.80, 25.0) # stop point before spin door
 GATE_EXIT_XY = (29.93, 21.32) # past gate
 GOAL_XY = (14.08, 23.82) # finish line
+DOOR_CENTER_XY = (31.85, 25.76) # yellow rotating door center
+
+# reset detection
+START_RESET_RADIUS_M = 5.0  # if car is within this radius of start -> sim reset
 
 # behavior tree
 WALL_STOP_CM = 40 # emergency stop distance

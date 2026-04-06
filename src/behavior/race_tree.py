@@ -27,6 +27,7 @@ class RaceContext:
         self.passed_gate = False
         self.rc = None
         self.gate_go_pressed = False
+        self.door_angle_rad = None  # rotating door global angle
 
 
 # helpers
@@ -53,6 +54,10 @@ def _pure_pursuit(ctx):
 
 
 # conditions
+
+def sim_reset(ctx):
+    # near start point + not in phase 1 = sim teleported car back
+    return ctx.phase != 1 and _near_start(ctx)
 
 def is_finished(ctx):
     return ctx.tracker.finished
@@ -114,20 +119,37 @@ def stop_at_gate(ctx):
 
     return Status.SUCCESS
 
-def wait_for_button(ctx):
-    # check button A to pass gate
+DOOR_GO_ANGLE_DEG = 43.0  # rush when blades at this angle
+DOOR_GO_TOLERANCE_DEG = 3.0  # ±tolerance
+DOOR_STABLE_FRAMES = 3  # must be in range for this many consecutive frames
+
+def wait_for_gate(ctx):
+    if not hasattr(ctx, '_door_stable_count'):
+        ctx._door_stable_count = 0
+
+    if ctx.door_angle_rad is not None:
+        angle_deg = math.degrees(ctx.door_angle_rad)
+        diff = abs(angle_deg - DOOR_GO_ANGLE_DEG)
+        if diff < DOOR_GO_TOLERANCE_DEG:
+            ctx._door_stable_count += 1
+            if ctx._door_stable_count >= DOOR_STABLE_FRAMES:
+                ctx.gate_go_pressed = True
+                print(f"[BT] door at {angle_deg:.1f}° for {DOOR_STABLE_FRAMES} frames, GO!")
+        else:
+            ctx._door_stable_count = 0
+    else:
+        ctx._door_stable_count = 0
+
+    # fallback: button A
     rc = ctx.rc
-    if rc and rc.controller.was_pressed(rc.controller.Button.A):
+    if not ctx.gate_go_pressed and rc and rc.controller.was_pressed(rc.controller.Button.A):
         ctx.gate_go_pressed = True
-        print("[BT] GO! Passing gate at full throttle")
+        print("[BT] manual GO!")
     ctx.speed = 0.0
     ctx.angle = 0.0
     return Status.SUCCESS
 
 def pass_gate(ctx):
-    if _detect_reset(ctx):
-        _reset_all(ctx)
-        return Status.FAILURE
     _pure_pursuit(ctx)
     ctx.speed = 1.0 # full speed when passing through the gate
     dist = _dist_to_gate(ctx)
@@ -136,13 +158,19 @@ def pass_gate(ctx):
         print("[BT] Phase 3: normal driving to finish")
     return Status.SUCCESS
 
+def do_reset(ctx):
+    _reset_all(ctx)
+    ctx.speed = 0.0
+    ctx.angle = 0.0
+    return Status.SUCCESS
+
 def emergency_stop(ctx):
     ctx.speed = 0.0
     ctx.angle = 0.0
     return Status.SUCCESS
 
-def _detect_reset(ctx):
-    return getattr(ctx, '_reset_detected', False)
+def _near_start(ctx):
+    return math.hypot(ctx.x - START_XY[0], ctx.y - START_XY[1]) < START_RESET_RADIUS_M
 
 def _reset_all(ctx):
     ctx.phase = 1
@@ -154,9 +182,6 @@ def _reset_all(ctx):
     print("[BT] sim reset detected, back to Phase 1")
 
 def follow_path(ctx):
-    if _detect_reset(ctx):
-        _reset_all(ctx)
-        return Status.FAILURE
     _pure_pursuit(ctx)
     return Status.SUCCESS
 
@@ -191,13 +216,15 @@ def build_race_tree():
       5. normal -> follow path
     """
     return Fallback(
+        # sim reset: car teleported back to start
+        Sequence(Condition(sim_reset), Action(do_reset)),
         Sequence(Condition(is_finished), Action(emergency_stop)),
         Sequence(Condition(wall_too_close), Action(emergency_stop)),
         # phase 1: approach + stop at gate
         Sequence(Condition(reached_gate), Action(stop_at_gate)),
         Sequence(Condition(approaching_gate), Action(slow_for_gate_approach)),
         # phase 2: wait for button press and then go
-        Sequence(Condition(waiting_for_gate_go), Action(wait_for_button)),
+        Sequence(Condition(waiting_for_gate_go), Action(wait_for_gate)),
         Sequence(Condition(passing_gate), Action(pass_gate)),
         # phase 3 + drive to final
         Sequence(Condition(obstacle_ahead), Action(slow_for_obstacle)),

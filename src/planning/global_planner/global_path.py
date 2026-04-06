@@ -90,8 +90,8 @@ def _dijkstra_path(track_map, cfg, start_xy, goal_xy):
     for px, py in [start_xy, goal_xy]:
         cx = round((px - track_map.world_min_x_m) / cfg.plan_res_m)
         cy = round((py - origin_y) / cfg.plan_res_m)
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
+        for dx in range(-4, 5):
+            for dy in range(-4, 5):
                 gx, gy = cx + dx, cy + dy
                 if 0 <= gx < W and 0 <= gy < H:
                     obs_xy[gx][gy] = False

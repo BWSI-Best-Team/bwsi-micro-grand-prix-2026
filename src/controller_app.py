@@ -10,6 +10,7 @@ import numpy as np
 from controller_config import ControllerConfig, load_controller_config
 from perception.input_manager import InputManager
 from perception.pose_estimator import PoseEstimator
+from perception.door_tracker import DoorTracker
 from control.path_tracker import PurePursuitTracker
 from control.stopper import Stopper
 from util.track_map import TrackMap
@@ -54,6 +55,7 @@ class GrandPrixController:
         self._bt_ctx = RaceContext()
         self._bt_ctx.stopper = Stopper()
         self._bt_ctx.rc = rc
+        self._door_tracker = DoorTracker(DOOR_CENTER_XY, self._path_track_map)
 
         self._path_preview_img = None
         self._log_file = None
@@ -69,6 +71,7 @@ class GrandPrixController:
         self._rc.drive.stop()
         self._create_visualizer_windows()
 
+        self._rc.set_update_slow_time(0.2) # print 5 times per second
         print(
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
@@ -158,7 +161,8 @@ class GrandPrixController:
             f"[Phase {self._bt_ctx.phase}: {phase}] "
             f"cmd=({self._speed:.2f},{self._angle:.2f}) "
             f"front={self._inputs.state.front_distance_cm:.1f}cm "
-            f"{loc}"
+            f"{loc} "
+            f"{self._door_tracker.debug_str()}"
         )
 
     def _save_path_preview(self, track_map, path, start_xy) -> None:
@@ -207,7 +211,36 @@ class GrandPrixController:
             cv.circle(canvas, (pc, pr), 8, (0, 200, 255), -1)  # orange dot
         except Exception:
             pass
+        # draw door blades
+        self._draw_door_blades(canvas)
         cv.imshow("BWSI Path", canvas)
+
+    def _draw_door_blades(self, canvas) -> None:
+        tm = self._path_track_map
+        scale = canvas.shape[1] / tm.width_px
+        dt = self._door_tracker
+
+        # draw detected blade points with green dots
+        for wx, wy in dt._blade_points_world:
+            r, c = tm.world_to_grid(wx, wy)
+            px, py = int(c * scale), int(r * scale)
+            cv.circle(canvas, (px, py), 3, (0, 255, 0), -1)
+
+        # draw door center
+        dr, dc = tm.world_to_grid(dt.cx, dt.cy)
+        cx_px, cy_px = int(dc * scale), int(dr * scale)
+        cv.circle(canvas, (cx_px, cy_px), 6, (0, 255, 255), -1)
+
+        # draw estimated blade lines
+        if dt._debug_angle is not None:
+            blade_len_px = int(1.0 / tm.resolution_m_per_px * scale) # 1m line
+            for k in range(4):
+                a = dt._debug_angle + k * math.pi / 2.0
+                ex = dt.cx + 1.0 * math.cos(a)
+                ey = dt.cy + 1.0 * math.sin(a)
+                er, ec = tm.world_to_grid(ex, ey)
+                ep = (int(ec * scale), int(er * scale))
+                cv.line(canvas, (cx_px, cy_px), ep, (0, 0, 255), 2)
 
     def _update_mode(self) -> None:
         if self._inputs.state.color_image is None:
@@ -247,6 +280,10 @@ class GrandPrixController:
         else:
             ctx._reset_detected = False
         ctx._last_x, ctx._last_y = x_m, y_m
+        # door angle estimation
+        ctx.door_angle_rad = self._door_tracker.estimate_angle(
+            ctx.lidar, x_m, y_m, yaw
+        )
         ctx.speed, ctx.angle = 0.0, 0.0
         self._bt.tick(ctx)
 
