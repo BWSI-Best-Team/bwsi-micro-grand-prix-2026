@@ -94,7 +94,7 @@ class GrandPrixController:
             start_xy = (17.68, 24.80)
         # plan through all waypoints and smooth only once
         points = [start_xy, GATE_ENTER_XY, GATE_EXIT_XY, GOAL_XY]
-        gate_cfg = GlobalPathConfig(inflate_m=0.25, corner_extra_m=0.35)
+        gate_cfg = GlobalPathConfig(inflate_m=GATE_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
         cfgs = [None, gate_cfg, None]  # default for seg1 and seg3, tighter for seg2
         print(f"[INFO] Global Planner: {' -> '.join(str(p) for p in points)}")
         waypoints = compute_multi_segment_path(self._path_track_map, points, cfgs)
@@ -108,7 +108,7 @@ class GrandPrixController:
         self._save_path_preview(self._path_track_map, waypoints, start_xy)
 
         # spin door location for behavior tree
-        self._bt_ctx.gate_xy = GATE_ENTER_XY
+        self._bt_ctx.gate_enter_xy = GATE_ENTER_XY
 
     def update(self) -> None:
         self._rc.drive.set_max_speed(1.0) # Located here per regulation

@@ -8,18 +8,19 @@ import numpy as np
 from scipy.signal import savgol_filter
 
 from util.types import Waypoint
+from util.constants import INFLATE_M, CORNER_EXTRA_M, SAVGOL_WINDOW_M, SMOOTH_PASSES
 from .dijkstra_grid import GridDijkstraPlanner
 
 
 @dataclass
 class GlobalPathConfig:
-    inflate_m: float = 0.35       # costmap inflation from walls
+    inflate_m: float = INFLATE_M
     plan_res_m: float = 0.15      # Dijkstra planning cell size
     resample_ds_m: float = 0.10   # output waypoint spacing
-    savgol_window_m: float = 9.0  # smoothing window length
+    savgol_window_m: float = SAVGOL_WINDOW_M
     savgol_polyorder: int = 3
-    smooth_passes: int = 2        # number of savgol passes
-    corner_extra_m: float = 0.3   # extra inflation at sharp wall corners
+    smooth_passes: int = SMOOTH_PASSES
+    corner_extra_m: float = CORNER_EXTRA_M
 
 
 def compute_global_path(track_map, start_xy, goal_xy, cfg=None):
