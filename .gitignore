@@ -8,3 +8,4 @@ vendor/onnxruntime_gpu_py39
 lidar_samples*
 .python39
 models/
+docs/
