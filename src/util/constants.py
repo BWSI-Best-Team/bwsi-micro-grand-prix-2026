@@ -13,7 +13,7 @@ DOOR_CENTER_XY = (31.85, 25.76) # yellow rotating door center
 START_RESET_RADIUS_M = 5.0  # if car is within this radius of start -> sim reset
 
 # behavior tree
-WALL_STOP_CM = 40 # emergency stop distance
+WALL_STOP_CM = 50 # emergency stop distance
 OBSTACLE_SLOW_CM = 150  # start slowing down
 GATE_APPROACH_RADIUS_M = 10.0 # start reducing speed
 GATE_ZONE_RADIUS_M = 1.5 # enter creep mode
@@ -26,7 +26,7 @@ STOPPER_MAX_SPEED_MS = 3.0
 
 # path tracker
 CRUISE_SPEED = 1.0
-CURVE_SLOWDOWN = 0.15
+CURVE_SLOWDOWN = 0.5
 CURVE_HORIZON_M = 1.5
 
 # costmap

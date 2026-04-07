@@ -28,6 +28,8 @@ class RaceContext:
         self.rc = None
         self.gate_go_pressed = False
         self.door_angle_rad = None  # rotating door global angle
+        self.green_detected = False
+        self.depth_center_cm = 0.0
 
 
 # helpers
@@ -63,7 +65,10 @@ def is_finished(ctx):
     return ctx.tracker.finished
 
 def wall_too_close(ctx):
-    return _min_front_cm(ctx) < WALL_STOP_CM
+    close = _min_front_cm(ctx) < WALL_STOP_CM
+    if not close:
+        ctx._estop_printed = False  # reset so it prints again next time
+    return close
 
 def obstacle_ahead(ctx):
     return _min_front_cm(ctx) < OBSTACLE_SLOW_CM
@@ -74,6 +79,12 @@ def approaching_gate(ctx):
 
 def reached_gate(ctx):
     return _dist_to_gate(ctx) < GATE_ZONE_RADIUS_M and ctx.phase == 1
+
+GREEN_SLOW_DIST_CM = 500 # 5m
+GREEN_SLOW_FRAMES = 45 # 0.5 second at 60fps
+
+def green_nearby(ctx):
+    return ctx.phase == 3 and ctx.green_detected and ctx.depth_center_cm < GREEN_SLOW_DIST_CM
 
 def waiting_for_gate_go(ctx):
     return ctx.phase == 2 and not ctx.gate_go_pressed
@@ -164,7 +175,26 @@ def do_reset(ctx):
     ctx.angle = 0.0
     return Status.SUCCESS
 
+def slow_for_green(ctx):
+    # slow to 0.5 for 1 second, then back to 1.0
+    if not hasattr(ctx, '_green_slow_counter'):
+        ctx._green_slow_counter = 0
+    ctx._green_slow_counter += 1
+    _pure_pursuit(ctx)
+    if ctx._green_slow_counter <= GREEN_SLOW_FRAMES:
+        ctx.speed *= 0.5
+        if ctx._green_slow_counter == 1:
+            print("[BT] green detected < 5m, slowing to 0.5")
+    else:
+        if ctx._green_slow_counter == GREEN_SLOW_FRAMES + 1:
+            print("[BT] green slowdown done, back to 1.0")
+    return Status.SUCCESS
+
 def emergency_stop(ctx):
+    if not getattr(ctx, '_estop_printed', False):
+        front = _min_front_cm(ctx)
+        print(f"[BT] emergency stop (front={front:.0f}cm)")
+        ctx._estop_printed = True
     ctx.speed = 0.0
     ctx.angle = 0.0
     return Status.SUCCESS
@@ -226,7 +256,9 @@ def build_race_tree():
         # phase 2: wait for button press and then go
         Sequence(Condition(waiting_for_gate_go), Action(wait_for_gate)),
         Sequence(Condition(passing_gate), Action(pass_gate)),
-        # phase 3 + drive to final
+        # phase 3: green < 5m -> slow 0.5 for 1s
+        Sequence(Condition(green_nearby), Action(slow_for_green)),
+        # general
         Sequence(Condition(obstacle_ahead), Action(slow_for_obstacle)),
         Action(follow_path),
     )

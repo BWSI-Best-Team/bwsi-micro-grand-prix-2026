@@ -11,6 +11,8 @@ from controller_config import ControllerConfig, load_controller_config
 from perception.input_manager import InputManager
 from perception.pose_estimator import PoseEstimator
 from perception.door_tracker import DoorTracker
+from perception.color_detector import ColorDetector, GREEN
+from perception.depth_detector import DepthDetector
 from control.path_tracker import PurePursuitTracker
 from control.stopper import Stopper
 from util.track_map import TrackMap
@@ -56,6 +58,8 @@ class GrandPrixController:
         self._bt_ctx.stopper = Stopper()
         self._bt_ctx.rc = rc
         self._door_tracker = DoorTracker(DOOR_CENTER_XY, self._path_track_map)
+        self._color_detector = ColorDetector()
+        self._depth_detector = DepthDetector()
 
         self._path_preview_img = None
         self._log_file = None
@@ -284,6 +288,13 @@ class GrandPrixController:
         ctx.door_angle_rad = self._door_tracker.estimate_angle(
             ctx.lidar, x_m, y_m, yaw
         )
+        # color + depth detection
+        self._color_detector.update(
+            self._inputs.state.color_image, colors=[("GREEN", GREEN)]
+        )
+        self._depth_detector.update(self._inputs.state.depth_image)
+        ctx.green_detected = self._color_detector.detected_color == "GREEN"
+        ctx.depth_center_cm = self._depth_detector.center_distance_cm
         ctx.speed, ctx.angle = 0.0, 0.0
         self._bt.tick(ctx)
 
