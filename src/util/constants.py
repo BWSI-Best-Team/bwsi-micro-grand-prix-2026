@@ -2,6 +2,10 @@
 
 UNITY_TO_M = 0.10 # Unity unit (dm) to meters
 
+# simulator speed override
+ENABLE_SIM_SPEED_HACK = True
+SIM_HACK_MAX_SPEED = 1.8
+
 # waypoints in meters
 START_XY = (17.68, 24.80)      # default start position
 GATE_ENTER_XY = (28.80, 25.0) # stop point before spin door

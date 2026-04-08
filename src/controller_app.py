@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import struct
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,8 @@ class GrandPrixController:
         print(
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
+        if ENABLE_SIM_SPEED_HACK:
+            print(f"[INFO] Simulator speed hack enabled: max_speed={SIM_HACK_MAX_SPEED:.2f}")
 
         # open log file
         import csv
@@ -118,7 +121,7 @@ class GrandPrixController:
         self._bt_ctx.gate_enter_xy = GATE_ENTER_XY
 
     def update(self) -> None:
-        self._rc.drive.set_max_speed(1.0) # Located here per regulation
+        self._apply_drive_max_speed()
 
         self._frame_count += 1
         self._inputs.update()
@@ -299,6 +302,19 @@ class GrandPrixController:
         self._bt.tick(ctx)
 
         return DriveCommand(speed=ctx.speed, angle=ctx.angle)
+
+    def _apply_drive_max_speed(self) -> None:
+        if ENABLE_SIM_SPEED_HACK and hasattr(self._rc, "_RacecarSim__send_data"):
+            self._rc._RacecarSim__send_data(
+                struct.pack(
+                    "Bf",
+                    self._rc.Header.drive_set_max_speed.value,
+                    SIM_HACK_MAX_SPEED,
+                )
+            )
+            return
+
+        self._rc.drive.set_max_speed(1.0)
 
     def _show_visualizer(self) -> None:
         # show path window
