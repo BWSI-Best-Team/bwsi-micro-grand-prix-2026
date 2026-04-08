@@ -9,3 +9,9 @@ lidar_samples*
 .python39
 models/
 docs/
+
+# Training data
+*.npy
+*.csv
+*.log
+*.tgz
