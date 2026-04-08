@@ -123,6 +123,53 @@ class DistanceField:
         row, col = self.world_to_grid(x_m, z_m)
         return float(self.distance_m[row, col])
 
+    def distance_at_bilinear_array(
+        self,
+        x_m_array: np.ndarray,
+        z_m_array: np.ndarray,
+    ) -> np.ndarray:
+        x_arr = np.asarray(x_m_array, dtype=np.float32)
+        z_arr = np.asarray(z_m_array, dtype=np.float32)
+        if x_arr.shape != z_arr.shape:
+            raise ValueError("x_m_array and z_m_array must have the same shape")
+        if x_arr.size == 0:
+            return np.zeros_like(x_arr, dtype=np.float32)
+
+        col_f = (x_arr - self.min_x_m) / self.cell_size_m
+        row_f = (self.max_z_m - z_arr) / self.cell_size_m
+
+        in_bounds = (
+            (col_f >= 0.0)
+            & (col_f <= self.width_px - 1)
+            & (row_f >= 0.0)
+            & (row_f <= self.height_px - 1)
+        )
+
+        distances = np.full(x_arr.shape, self.max_distance_m, dtype=np.float32)
+        if not np.any(in_bounds):
+            return distances
+
+        col0 = np.floor(col_f[in_bounds]).astype(np.int32)
+        row0 = np.floor(row_f[in_bounds]).astype(np.int32)
+        col1 = np.clip(col0 + 1, 0, self.width_px - 1)
+        row1 = np.clip(row0 + 1, 0, self.height_px - 1)
+
+        tc = col_f[in_bounds] - col0
+        tr = row_f[in_bounds] - row0
+
+        d00 = self.distance_m[row0, col0]
+        d01 = self.distance_m[row0, col1]
+        d10 = self.distance_m[row1, col0]
+        d11 = self.distance_m[row1, col1]
+
+        distances[in_bounds] = (
+            d00 * (1.0 - tr) * (1.0 - tc)
+            + d01 * (1.0 - tr) * tc
+            + d10 * tr * (1.0 - tc)
+            + d11 * tr * tc
+        ).astype(np.float32)
+        return distances
+
 
 def parse_wall(wall, wall_scale: float) -> tuple[float, float, float, float, float]:
     if isinstance(wall, dict):
