@@ -1,15 +1,25 @@
 import math
-import numpy as np
 
 
 class DoorTracker:
-    def __init__(self, door_center_xy, track_map, blade_radius_m=1.5):
+    def __init__(
+        self,
+        door_center_xy,
+        track_map,
+        blade_radius_m=1.5,
+        center_exclusion_m=0.12,
+        min_blade_points=4,
+    ):
         self.cx, self.cy = door_center_xy
         self.map = track_map
         self.blade_radius = blade_radius_m
+        self.center_exclusion_m = center_exclusion_m
+        self.min_blade_points = min_blade_points
         self._debug_blade_count = 0
         self._debug_angle = None
         self._blade_points_world = []  # for visualization
+        self._debug_fit_error_m = None
+        self._debug_confidence = 0.0
 
     # return door global rotation angle
     def estimate_angle(self, lidar_scan, car_x, car_y, car_yaw):
@@ -17,8 +27,8 @@ class DoorTracker:
             return None
 
         N = len(lidar_scan)
-        blade_angles = []
         blade_points = []
+        blade_points_local = []
 
         for i in range(N):
             dist_cm = lidar_scan[i]
@@ -43,46 +53,113 @@ class DoorTracker:
             # and only keep points near door center
             dx = wx - self.cx
             dy = wy - self.cy
-            if math.hypot(dx, dy) > self.blade_radius:
+            radius_m = math.hypot(dx, dy)
+            if radius_m > self.blade_radius or radius_m < self.center_exclusion_m:
                 continue
 
-            # ckecked it's on a door blade
-            blade_angles.append(math.atan2(dy, dx))
+            # Keep points that are likely on one of the door blades.
             blade_points.append((wx, wy))
+            blade_points_local.append((dx, dy))
 
         self._blade_points_world = blade_points
-        self._debug_blade_count = len(blade_angles)
+        self._debug_blade_count = len(blade_points_local)
+        self._debug_fit_error_m = None
+        self._debug_confidence = 0.0
 
-        if not blade_angles:
+        if len(blade_points_local) < self.min_blade_points:
             self._debug_angle = None
             return None
 
-        angle = _cluster_mean_mod90(blade_angles)
+        angle, fit_error_m = _fit_cross_angle(blade_points_local)
         self._debug_angle = angle
+        self._debug_fit_error_m = fit_error_m
+        self._debug_confidence = _fit_confidence(len(blade_points_local), fit_error_m)
         return angle
 
     def debug_str(self):
         if self._debug_angle is None:
             return f"door: no blades ({self._debug_blade_count} pts)"
         deg = math.degrees(self._debug_angle)
-        return f"door: {deg:.1f}deg ({self._debug_blade_count} pts)"
-
-
-def _cluster_mean_mod90(angles):
+        fit_cm = 100.0 * (self._debug_fit_error_m or 0.0)
+        return (
+            f"door: {deg:.1f}deg ({self._debug_blade_count} pts, "
+            f"fit={fit_cm:.1f}cm, conf={self._debug_confidence:.2f})"
+        )
+def _fit_cross_angle(points_xy):
     half_pi = math.pi / 2.0
-    # map to [0, pi/2)
-    mapped = [(a % half_pi) for a in angles]
+    coarse_step = math.radians(1.0)
+    fine_step = math.radians(0.25)
+    final_step = math.radians(0.05)
 
-    # average angles on a circle so 2 and 88 degree goes to 0
-    sin_sum = sum(math.sin(2.0 * a) for a in mapped)
-    cos_sum = sum(math.cos(2.0 * a) for a in mapped)
-    mean_2a = math.atan2(sin_sum, cos_sum)
-    mean = mean_2a / 2.0
+    best_angle = 0.0
+    best_score = float("inf")
 
-    # normalize to [0, pi/2)
-    while mean < 0:
-        mean += half_pi
-    while mean >= half_pi:
-        mean -= half_pi
+    angle = 0.0
+    while angle < half_pi:
+        score = _cross_fit_score(points_xy, angle)
+        if score < best_score:
+            best_score = score
+            best_angle = angle
+        angle += coarse_step
 
-    return mean
+    best_angle, best_score = _refine_cross_angle(
+        points_xy,
+        best_angle,
+        window_rad=math.radians(2.0),
+        step_rad=fine_step,
+    )
+    best_angle, best_score = _refine_cross_angle(
+        points_xy,
+        best_angle,
+        window_rad=math.radians(0.5),
+        step_rad=final_step,
+    )
+    return best_angle, best_score
+
+
+def _refine_cross_angle(points_xy, center_angle_rad, window_rad, step_rad):
+    half_pi = math.pi / 2.0
+    best_angle = center_angle_rad % half_pi
+    best_score = _cross_fit_score(points_xy, best_angle)
+
+    start = center_angle_rad - window_rad
+    stop = center_angle_rad + window_rad
+    steps = max(1, int(round((stop - start) / step_rad)))
+    for i in range(steps + 1):
+        angle = (start + i * step_rad) % half_pi
+        score = _cross_fit_score(points_xy, angle)
+        if score < best_score:
+            best_score = score
+            best_angle = angle
+    return best_angle, best_score
+
+
+def _cross_fit_score(points_xy, angle_rad):
+    errors_m = []
+    axis_a = angle_rad
+    axis_b = angle_rad + math.pi / 2.0
+
+    sin_a = math.sin(axis_a)
+    cos_a = math.cos(axis_a)
+    sin_b = math.sin(axis_b)
+    cos_b = math.cos(axis_b)
+
+    for x_m, y_m in points_xy:
+        # Perpendicular distance to the nearer blade axis through the center.
+        dist_a = abs(-sin_a * x_m + cos_a * y_m)
+        dist_b = abs(-sin_b * x_m + cos_b * y_m)
+        errors_m.append(min(dist_a, dist_b))
+
+    if not errors_m:
+        return float("inf")
+
+    errors_m.sort()
+    keep_count = max(1, int(math.ceil(len(errors_m) * 0.75)))
+    kept = errors_m[:keep_count]
+    return sum(kept) / len(kept)
+
+
+def _fit_confidence(point_count, fit_error_m):
+    count_term = min(1.0, point_count / 12.0)
+    fit_term = max(0.0, 1.0 - fit_error_m / 0.20)
+    return count_term * fit_term
