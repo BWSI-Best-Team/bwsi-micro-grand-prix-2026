@@ -140,11 +140,12 @@ class GrandPrixController:
         log_dir.mkdir(exist_ok=True)
         self._log_file = open(log_dir / "run_log.csv", "w", newline="")
         self._log_writer = csv.writer(self._log_file)
-        self._log_writer.writerow(["frame", "phase", "speed", "angle", "x", "y", "yaw", "v_fwd", "front_cm"])
+        self._log_writer.writerow(["frame", "phase", "speed", "angle", "x", "y", "yaw", "v_fwd", "front_cm", "accel_fwd", "accel_right", "gyro_z"])
 
         self._bt_ctx.gate_enter_xy = GATE_ENTER_XY
         self._planning_done = False
         self._start_detected = False
+        self._cached_start_xy = None
 
         self._do_planning()
 
@@ -175,7 +176,7 @@ class GrandPrixController:
         cx = int(M["m10"] / M["m00"])
         d_cm = depth_img[cy, cx] if 0 <= cy < 480 and 0 <= cx < 640 else 0
 
-        if d_cm < 220:
+        if d_cm < 225:
             result = START_XY_B
         else:
             result = START_XY_A
@@ -183,10 +184,11 @@ class GrandPrixController:
         return result
 
     def _do_planning(self):
-        if self._planning_done:
+        if getattr(self, '_planning_done', True):
             return
         self._planning_done = True
-        start_xy = self._detect_start_position()
+        start_xy = self._cached_start_xy or self._detect_start_position()
+        self._cached_start_xy = start_xy
         points = [start_xy, GATE_ENTER_XY, GATE_EXIT_XY, GOAL_XY]
         gate_cfg = GlobalPathConfig(inflate_m=GATE_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
         phase3_cfg = GlobalPathConfig(inflate_m=PHASE3_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
@@ -200,7 +202,10 @@ class GrandPrixController:
             curve_horizon_m=CURVE_HORIZON_M,
         )
         print(f"[INFO] Global path: {len(waypoints)} waypoints")
-        self._save_path_preview(self._path_track_map, waypoints, start_xy)
+        try:
+            self._save_path_preview(self._path_track_map, waypoints, start_xy)
+        except Exception:
+            pass
 
     def update(self) -> None:
         # speed hack for phase 2+3
@@ -235,12 +240,16 @@ class GrandPrixController:
         # log every frame
         if self._log_writer:
             ctx = self._bt_ctx
+            imu = self._inputs.state
             self._log_writer.writerow([
                 self._frame_count, ctx.phase,
                 f"{self._speed:.3f}", f"{self._angle:.3f}",
                 f"{ctx.x:.3f}", f"{ctx.y:.3f}", f"{ctx.yaw:.3f}",
                 f"{ctx.v_fwd:.3f}",
                 f"{self._inputs.state.front_distance_cm:.1f}",
+                f"{imu.imu_accel_forward_mps2:.3f}",
+                f"{imu.imu_accel_right_mps2:.3f}",
+                f"{imu.imu_yaw_rate_rad_per_s:.4f}",
             ])
             self._log_file.flush()
         self._rc.drive.set_speed_angle(self._speed, self._angle)
@@ -256,11 +265,14 @@ class GrandPrixController:
             loc = "icp=(?)"
         phase_names = {1: "TO_GATE", 2: "PASS_GATE", 3: "TO_FINISH"}
         phase = phase_names.get(self._bt_ctx.phase, "?")
+        imu = self._inputs.state
         print(
             f"[Phase {self._bt_ctx.phase}: {phase}] "
             f"cmd=({self._speed:.2f},{self._angle:.2f}) "
-            f"front={self._inputs.state.front_distance_cm:.1f}cm "
+            f"front={imu.front_distance_cm:.1f}cm "
             f"{loc} "
+            f"accel=({imu.imu_accel_forward_mps2:.2f},{imu.imu_accel_right_mps2:.2f}) "
+            f"gyro={imu.imu_yaw_rate_rad_per_s:.3f} "
             f"{self._door_tracker.debug_str()}"
         )
 
@@ -354,7 +366,7 @@ class GrandPrixController:
 
         # seed ICP on first frame
         if self._icp_loc.pose is None:
-            start = self._detect_start_position()
+            start = self._cached_start_xy or self._detect_start_position()
             self._icp_loc.initialize_at(start[0], start[1], 0.0)
             print(f"[ICP] init at {start}")
 
@@ -396,21 +408,56 @@ class GrandPrixController:
         self._pose_estimator.update_speed_from_position(x_m, y_m, ctx.dt)
         ctx.v_fwd = self._pose_estimator.speed_mps
 
-        # update last position + out-of-bounds detection
+        # reset detection: IMU crash + out-of-bounds + position jump
         b = self._icp_loc.map.bounds
         out_of_bounds = (x_m < b[0] - 1 or x_m > b[1] + 1 or
                          y_m < b[2] - 1 or y_m > b[3] + 1)
+
+        accel_mag = math.hypot(self._inputs.state.imu_accel_forward_mps2,
+                               self._inputs.state.imu_accel_right_mps2)
+        imu_crash = accel_mag > 5.0
+
+        if not hasattr(ctx, '_crash_counter'):
+            ctx._crash_counter = 0
+        if imu_crash:
+            ctx._crash_counter += 1
+        else:
+            ctx._crash_counter = max(0, ctx._crash_counter - 1)
+
+        # orange detected in phase 2/3 = teleported back to start
+        orange_reset = False
+        if ctx.phase >= 2:
+            color_img = self._rc.camera.get_color_image_no_copy()
+            if color_img is not None:
+                import cv2
+                hsv = cv2.cvtColor(color_img, cv2.COLOR_BGR2HSV)
+                mask = cv2.inRange(hsv, np.array([10, 150, 150]), np.array([30, 255, 255]))
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    largest = max(contours, key=cv2.contourArea)
+                    if cv2.contourArea(largest) > 5000:
+                        orange_reset = True
+                        print(f"[RESET] orange detected in phase {ctx.phase}, area={cv2.contourArea(largest):.0f}px")
+
         if hasattr(ctx, '_last_x'):
             jump = math.hypot(x_m - ctx._last_x, y_m - ctx._last_y)
-            ctx._reset_detected = jump > 5.0 or out_of_bounds
-            if ctx._reset_detected:
-                self._planning_done = False
-                self._icp_loc.initialize_at(START_XY_A[0], START_XY_A[1], 0.0)
+            needs_reset = jump > 5.0 or out_of_bounds or ctx._crash_counter >= 1 or orange_reset
         else:
-            ctx._reset_detected = out_of_bounds
-            if out_of_bounds:
-                self._planning_done = False
-                self._icp_loc.initialize_at(START_XY_A[0], START_XY_A[1], 0.0)
+            needs_reset = out_of_bounds or orange_reset
+
+        if needs_reset:
+            self._planning_done = False
+            self._cached_start_xy = START_XY_A  # reset always spawns at A
+            self._icp_loc.pose = None  # re-init after re-planning
+            ctx.phase = 1
+            ctx._gate_active = False
+            ctx._gate_locked = False
+            ctx._gate_stop_frames = 0
+            ctx.gate_go_pressed = False
+            ctx._crash_counter = 0
+            ctx._reset_detected = True
+        else:
+            ctx._reset_detected = False
         ctx._last_x, ctx._last_y = x_m, y_m
         # door angle
         ctx.door_angle_rad = self._door_tracker.estimate_angle(

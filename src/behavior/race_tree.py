@@ -65,13 +65,15 @@ def is_finished(ctx):
     return ctx.tracker.finished
 
 def wall_too_close(ctx):
-    close = _min_front_cm(ctx) < WALL_STOP_CM
+    if ctx.phase == 2:
+        return False  # no emergency stop during gate pass
+    close = _min_front_cm(ctx, cone_deg=30) < WALL_STOP_CM
     if not close:
-        ctx._estop_printed = False  # reset so it prints again next time
+        ctx._estop_printed = False
     return close
 
 def obstacle_ahead(ctx):
-    return _min_front_cm(ctx) < OBSTACLE_SLOW_CM
+    return _min_front_cm(ctx, cone_deg=40) < OBSTACLE_SLOW_CM
 
 def approaching_gate(ctx):
     d = _dist_to_gate(ctx)
@@ -160,13 +162,13 @@ def wait_for_gate(ctx):
 
 def pass_gate(ctx):
     _pure_pursuit(ctx)
+    dist = _dist_to_gate(ctx)
     ctx.speed = 1.0 # full speed when passing through the gate
-    ctx.angle *= 1.3  # moderate steering through gate
+    ctx.angle *= 1.0
     ctx.angle = max(-1.0, min(1.0, ctx.angle))
     if not getattr(ctx, '_pass_gate_printed', False):
         print(f"[BT] pass_gate ACTIVE, speed={ctx.speed}")
         ctx._pass_gate_printed = True
-    dist = _dist_to_gate(ctx)
     if dist > GATE_EXIT_DIST_M:
         ctx.phase = 3
         print("[BT] Phase 3: normal driving to finish")
@@ -217,12 +219,9 @@ def _reset_all(ctx):
 def follow_path(ctx):
     _pure_pursuit(ctx)
     if ctx.phase == 3:
-        ctx.angle *= 1.7
+        ctx.angle *= 2.5
         ctx.angle = max(-1.0, min(1.0, ctx.angle))
-        if abs(ctx.angle) > 0.7:
-            ctx.speed = 0.7
-        else:
-            ctx.speed = 1.0
+        ctx.speed *= 0.5
     return Status.SUCCESS
 
 def slow_for_gate_approach(ctx):

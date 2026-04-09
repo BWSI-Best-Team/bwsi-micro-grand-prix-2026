@@ -16,7 +16,7 @@ GOAL_XY = (14.08, 23.82) # finish line
 DOOR_CENTER_XY = (31.85, 25.76) # yellow rotating door center
 
 # reset detection
-START_RESET_RADIUS_M = 5.0  # if car is within this radius of start -> sim reset
+START_RESET_RADIUS_M = 2.0  # if car is within this radius of start -> sim reset
 
 # behavior tree
 WALL_STOP_CM = 50 # emergency stop distance
@@ -40,9 +40,9 @@ CURVE_HORIZON_M = 1.5
 
 # costmap
 INFLATE_M = 0.45            # default wall inflation
-GATE_INFLATE_M = 0.21       # tighter inflation for gate segment
+GATE_INFLATE_M = 0.25       # tighter inflation for gate segment
 PHASE3_INFLATE_M = 0.55     # phase 3 for extra 0.2 inflation for safety
-CORNER_EXTRA_M = 0.25       # extra inflation at sharp corners
+CORNER_EXTRA_M = 0.35       # extra inflation at sharp corners
 
 # smoothing
 SAVGOL_WINDOW_M = 8.0       # smoothing window length
