@@ -432,7 +432,10 @@ class GrandPrixController:
         return DriveCommand(speed=ctx.speed, angle=ctx.angle)
 
     def _show_visualizer(self) -> None:
-        # Path preview (always)
+        import os, sys
+        if sys.platform != "darwin" and os.environ.get("DISPLAY") is None:
+            return  # headless (no X11), skip cv2 GUI
+
         if self._path_preview_img is not None:
             self._show_path_window()
 

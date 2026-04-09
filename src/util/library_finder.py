@@ -7,6 +7,8 @@ def find_library(project_root):
         project_root.parent / "library",
         project_root.parent.parent / "racecar-neo-installer" / "racecar-student" / "library",
         project_root.parent / "racecar-neo-installer" / "racecar-student" / "library",
+        project_root.parent.parent / "library",
+        project_root.parent.parent.parent / "library",
     ]:
         if (candidate / "racecar_core.py").exists():
             return candidate
