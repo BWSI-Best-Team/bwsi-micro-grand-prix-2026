@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import struct
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -14,13 +13,13 @@ from perception.pose_estimator import PoseEstimator
 from perception.door_tracker import DoorTracker
 from perception.color_detector import ColorDetector, GREEN
 from perception.depth_detector import DepthDetector
+from localization.localizer import Localizer
 from control.path_tracker import PurePursuitTracker
 from control.stopper import Stopper
 from util.track_map import TrackMap
 from util.types import DriveCommand
-from planning.global_planner.global_path import compute_global_path, compute_multi_segment_path, GlobalPathConfig
+from planning.global_planner.global_path import compute_multi_segment_path, GlobalPathConfig
 from behavior.race_tree import build_race_tree, RaceContext
-import racecar_utils as rc_utils
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -62,6 +61,65 @@ class GrandPrixController:
         self._color_detector = ColorDetector()
         self._depth_detector = DepthDetector()
 
+        # ICP localizer
+        import json
+        with open(DATA_DIR / "track_map.json") as f:
+            meta = json.load(f)
+        with open(DATA_DIR / "map_features.json") as f:
+            feats = json.load(f)
+
+        # ICP uses clean map (not nav map)
+        _icp_map_path = DATA_DIR / "track_map_inference2.npy"
+        if _icp_map_path.exists():
+            grid_raw = np.load(str(_icp_map_path)) > 0
+        else:
+            grid_raw = self._path_track_map.grid > 0  # fallback
+        grid_raw = grid_raw[::-1]  # flip row order
+        origin = (meta["world_min_x_m"], meta["world_min_z_m"])
+        res = meta["resolution_m_per_px"]
+        ds = 2
+        h, w = grid_raw.shape
+        h2, w2 = (h // ds) * ds, (w // ds) * ds
+        grid = grid_raw[:h2, :w2].reshape(h2 // ds, ds, w2 // ds, ds).any(axis=(1, 3))
+        res = res * ds
+
+        # bake doors into grid as walls
+        ox, oz = origin
+        def _add_rect(g, d):
+            hw, hh = d["size_x_m"] / 2, d["size_z_m"] / 2
+            corners = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
+            yaw = d.get("yaw_rad", 0)
+            c_, s_ = math.cos(yaw), math.sin(yaw)
+            R_ = np.array([[c_, -s_], [s_, c_]])
+            cw = (R_ @ corners.T).T + np.array([d["center_x_m"], d["center_z_m"]])
+            cols = ((cw[:, 0] - ox) / res).astype(int)
+            rows = ((cw[:, 1] - oz) / res).astype(int)
+            pts = np.column_stack([cols, rows]).reshape((-1, 1, 2))
+            import cv2
+            cv2.fillPoly(g.view(np.uint8), [pts], 1)
+            return g.astype(bool)
+
+        for key in ["OrangeWalls", "PurpWalls", "GreenWalls"]:
+            for d in feats.get(key, []):
+                if "size_x_m" in d:
+                    grid = _add_rect(grid, d)
+
+        # revolving door mask zones
+        yellow_centers = [d for d in feats.get("YellowWalls", []) if d.get("name") == "center"]
+        yellow_panels = [d for d in feats.get("YellowWalls", []) if "size_x_m" in d]
+        mask_zones = []
+        for yc in yellow_centers:
+            cx, cz = yc["center_x_m"], yc["center_z_m"]
+            max_r = 0
+            for p in yellow_panels:
+                dist = math.hypot(p["center_x_m"] - cx, p["center_z_m"] - cz)
+                max_r = max(max_r, dist + p["size_x_m"] / 2)
+            mask_zones.append((cx, cz, max(max_r, 1.0)))
+
+        self._icp_loc = Localizer(grid, resolution=res, origin=origin,
+                                   mask_zones=mask_zones)
+        self._beam_angles = -np.linspace(0, 2 * np.pi, 720, endpoint=False)
+
         self._path_preview_img = None
         self._log_file = None
         self._log_writer = None
@@ -80,8 +138,6 @@ class GrandPrixController:
         print(
             ">> BWSI 2026 Grand Prix Best Team controller\n"
         )
-        if ENABLE_SIM_SPEED_HACK:
-            print(f"[INFO] Simulator speed hack enabled: max_speed={SIM_HACK_MAX_SPEED:.2f}")
 
         # open log file
         import csv
@@ -91,21 +147,53 @@ class GrandPrixController:
         self._log_writer = csv.writer(self._log_file)
         self._log_writer.writerow(["frame", "phase", "speed", "angle", "x", "y", "yaw", "v_fwd", "front_cm"])
 
-        # set start position
-#        self._rc.physics.set_simulator_not_official_pose(300.0, 0.0, 220.0, -np.pi / 2.0)
+        self._bt_ctx.gate_enter_xy = GATE_ENTER_XY
+        self._planning_done = False
+        self._start_detected = False
 
-        # Global planing, now not using config but can using config file in the future, cause there are only two start points
-        try:
-            # Get position from API, needs to change to ML odom
-            pose = self._rc.physics.get_simulator_not_official_pose()
-            start_xy = (float(pose[0]) * UNITY_TO_M, float(pose[2]) * UNITY_TO_M)
-        except AttributeError:
-            print("[WARNING] Simulator pose API not available, using default start")
-            start_xy = (17.68, 24.80)
-        # plan through all waypoints and smooth only once
+    def _detect_start_position(self):
+        color_img = self._rc.camera.get_color_image_no_copy()
+        depth_img = self._rc.camera.get_depth_image()
+        if color_img is None or depth_img is None:
+            print(f"[START] no camera -> default A {START_XY_A}")
+            return START_XY_A
+
+        import cv2
+        hsv = cv2.cvtColor(color_img, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array([10, 150, 150]), np.array([30, 255, 255]))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if not contours:
+            print(f"[START] no orange detected -> default A {START_XY_A}")
+            return START_XY_A
+
+        largest = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest)
+        if area < 200:
+            print(f"[START] orange too small ({area:.0f}px) -> default A {START_XY_A}")
+            return START_XY_A
+
+        M = cv2.moments(largest)
+        cy = int(M["m01"] / M["m00"])
+        cx = int(M["m10"] / M["m00"])
+        d_cm = depth_img[cy, cx] if 0 <= cy < 480 and 0 <= cx < 640 else 0
+
+        if d_cm < 220:
+            result = START_XY_B
+        else:
+            result = START_XY_A
+        print(f"[START] orange at ({cx},{cy}) depth={d_cm:.0f}cm area={area:.0f}px -> {'A' if result == START_XY_A else 'B'} {result}")
+        return result
+
+    def _do_planning(self):
+        if self._planning_done:
+            return
+        self._planning_done = True
+        start_xy = self._detect_start_position()
         points = [start_xy, GATE_ENTER_XY, GATE_EXIT_XY, GOAL_XY]
         gate_cfg = GlobalPathConfig(inflate_m=GATE_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
-        cfgs = [None, gate_cfg, None]  # default for seg1 and seg3, tighter for seg2
+        phase3_cfg = GlobalPathConfig(inflate_m=PHASE3_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
+        cfgs = [None, gate_cfg, phase3_cfg]
         print(f"[INFO] Global Planner: {' -> '.join(str(p) for p in points)}")
         waypoints = compute_multi_segment_path(self._path_track_map, points, cfgs)
         self._tracker = PurePursuitTracker(
@@ -117,11 +205,20 @@ class GrandPrixController:
         print(f"[INFO] Global path: {len(waypoints)} waypoints")
         self._save_path_preview(self._path_track_map, waypoints, start_xy)
 
-        # spin door location for behavior tree
-        self._bt_ctx.gate_enter_xy = GATE_ENTER_XY
-
     def update(self) -> None:
-        self._apply_drive_max_speed()
+        # speed hack for phase 2+3
+        if ENABLE_SIM_SPEED_HACK and self._bt_ctx.phase >= 2:
+            import struct
+            if hasattr(self._rc, "_RacecarSim__send_data"):
+                self._rc._RacecarSim__send_data(
+                    struct.pack("Bf",
+                                self._rc.Header.drive_set_max_speed.value,
+                                SIM_HACK_MAX_SPEED))
+            else:
+                self._rc.drive.set_max_speed(SIM_HACK_MAX_SPEED)
+        else:
+            self._rc.drive.set_max_speed(1.0)
+        self._do_planning()
 
         self._frame_count += 1
         self._inputs.update()
@@ -155,13 +252,11 @@ class GrandPrixController:
         if not self._config.print_log:
             return
 
-        try:
-            pose = self._rc.physics.get_simulator_not_official_pose()
-            yaw_ours = np.pi / 2.0 - float(pose[3])
-            loc = f"gt=({pose[0]*UNITY_TO_M:.2f},{pose[2]*UNITY_TO_M:.2f},{yaw_ours:.2f})"
-        except AttributeError:
-            p = self._pose_estimator.pose
-            loc = f"imu=({p.x_m:.2f},{p.y_m:.2f},{p.yaw_rad:.2f})"
+        if self._icp_loc.pose is not None:
+            p = self._icp_loc.pose
+            loc = f"icp=({p[0]:.2f},{p[1]:.2f},{p[2]:.2f})"
+        else:
+            loc = "icp=(?)"
         phase_names = {1: "TO_GATE", 2: "PASS_GATE", 3: "TO_FINISH"}
         phase = phase_names.get(self._bt_ctx.phase, "?")
         print(
@@ -173,7 +268,6 @@ class GrandPrixController:
         )
 
     def _save_path_preview(self, track_map, path, start_xy) -> None:
-        """Render the planned global path, save + open it in a window."""
         canvas = cv.cvtColor(track_map.grid, cv.COLOR_GRAY2BGR)
         for i in range(len(path) - 1):
             r0, c0 = track_map.world_to_grid(path[i].x_m, path[i].y_m)
@@ -200,15 +294,16 @@ class GrandPrixController:
         print(f"[INFO] Path preview: {out_path}")
 
     def _show_path_window(self) -> None:
-        """Show the planned path (and live car pose) in an OpenCV window."""
         if getattr(self, "_path_preview_img", None) is None:
             return
         canvas = self._path_preview_img.copy()
         # add car position
         try:
-            pose = self._rc.physics.get_simulator_not_official_pose()
-            x_m = float(pose[0]) * UNITY_TO_M
-            y_m = float(pose[2]) * UNITY_TO_M
+            icp_p = self._icp_loc.pose
+            if icp_p is None:
+                raise ValueError
+            x_m = icp_p[0]
+            y_m = icp_p[1]
             # world -> pixels
             tm = self._path_track_map
             orig_r, orig_c = tm.world_to_grid(x_m, y_m)
@@ -255,21 +350,45 @@ class GrandPrixController:
         else:
             self._mode = RacecarState.RUNNING
 
+    def _get_pose(self):
+        lidar = self._inputs.state.lidar_scan
+        dt = max(self._rc.get_delta_time(), 0.001)
+        gyro_z = self._inputs.state.imu_yaw_rate_rad_per_s
+
+        # seed ICP on first frame
+        if self._icp_loc.pose is None:
+            start = self._detect_start_position()
+            self._icp_loc.initialize_at(start[0], start[1], 0.0)
+            print(f"[ICP] init at {start}")
+
+        # ICP
+        if lidar is not None:
+            ranges_m = np.asarray(lidar, dtype=np.float32) / 100.0  # cm -> m
+            try:
+                accel_fwd = self._inputs.state.imu_accel_forward_mps2
+                accel_right = self._inputs.state.imu_accel_right_mps2
+                pose = self._icp_loc.update(
+                    ranges_m, self._beam_angles, dt, gyro_z=gyro_z,
+                    accel_forward=accel_fwd, accel_right=accel_right,
+                    cmd_speed=self._speed, cmd_angle=self._angle)
+                return pose[0], pose[1], pose[2]
+            except Exception as e:
+                if not getattr(self, '_icp_err_printed', False):
+                    print(f"[WARNING] ICP failed: {e}")
+                    self._icp_err_printed = True
+
+        # fallback EKF
+        if self._icp_loc.pose is not None:
+            return self._icp_loc.pose[0], self._icp_loc.pose[1], self._icp_loc.pose[2]
+
+        # fallback IMU
+        p = self._pose_estimator.pose
+        return p.x_m, p.y_m, p.yaw_rad
+
     def _compute_command(self) -> DriveCommand:
         if self._tracker is None:
             return DriveCommand(speed=0.0, angle=0.0)
-        # use sim patch if available, else IMU estimator
-        try:
-            pose = self._rc.physics.get_simulator_not_official_pose()
-        except AttributeError:
-            p = self._pose_estimator.pose
-            x_m, y_m, yaw = p.x_m, p.y_m, p.yaw_rad
-        else:
-            # Unity yaw=0 north, left-handed
-            # Ours yaw=0 east, right-handed
-            x_m = float(pose[0]) * UNITY_TO_M
-            y_m = float(pose[2]) * UNITY_TO_M
-            yaw = np.pi / 2.0 - float(pose[3])
+        x_m, y_m, yaw = self._get_pose()
 
         # behavior tree decides speed + angle
         ctx = self._bt_ctx
@@ -284,58 +403,45 @@ class GrandPrixController:
         if hasattr(ctx, '_last_x'):
             jump = math.hypot(x_m - ctx._last_x, y_m - ctx._last_y)
             ctx._reset_detected = jump > 5.0
+            if ctx._reset_detected:
+                # reset re-detect + re-plan
+                self._planning_done = False
+                start = self._detect_start_position()
+                self._icp_loc.initialize_at(start[0], start[1], 0.0)
+                print(f"[RESET] re-init ICP + re-plan from {start}")
         else:
             ctx._reset_detected = False
         ctx._last_x, ctx._last_y = x_m, y_m
-        # door angle estimation
+        # door angle
         ctx.door_angle_rad = self._door_tracker.estimate_angle(
             ctx.lidar, x_m, y_m, yaw
         )
-        # color + depth detection
+        # green detection
         self._color_detector.update(
             self._inputs.state.color_image, colors=[("GREEN", GREEN)]
         )
         self._depth_detector.update(self._inputs.state.depth_image)
         ctx.green_detected = self._color_detector.detected_color == "GREEN"
-        ctx.depth_center_cm = self._depth_detector.center_distance_cm
+        # depth at green detection position
+        if ctx.green_detected and self._color_detector.contour_center is not None:
+            row, col = self._color_detector.contour_center
+            depth_img = self._inputs.state.depth_image
+            if depth_img is not None and 0 <= row < depth_img.shape[0] and 0 <= col < depth_img.shape[1]:
+                d = depth_img[row, col]
+                ctx.depth_center_cm = d if d > 0 else 9999.0
+            else:
+                ctx.depth_center_cm = 9999.0
+        else:
+            ctx.depth_center_cm = self._depth_detector.center_distance_cm
         ctx.speed, ctx.angle = 0.0, 0.0
         self._bt.tick(ctx)
 
         return DriveCommand(speed=ctx.speed, angle=ctx.angle)
 
-    def _apply_drive_max_speed(self) -> None:
-        if ENABLE_SIM_SPEED_HACK and hasattr(self._rc, "_RacecarSim__send_data"):
-            self._rc._RacecarSim__send_data(
-                struct.pack(
-                    "Bf",
-                    self._rc.Header.drive_set_max_speed.value,
-                    SIM_HACK_MAX_SPEED,
-                )
-            )
-            return
-
-        self._rc.drive.set_max_speed(1.0)
-
     def _show_visualizer(self) -> None:
-        # show path window
+        # Path preview (always)
         if self._path_preview_img is not None:
             self._show_path_window()
-
-        if not self._config.show_visualizer:
-            cv.waitKey(1)
-            return
-
-        if self._inputs.state.color_image is not None:
-            cv.imshow(self.COLOR_WINDOW, self._inputs.state.color_image)
-
-        if self._inputs.state.depth_image is not None:
-            cv.imshow(
-                self.DEPTH_WINDOW,
-                rc_utils.colormap_depth_image(self._inputs.state.depth_image),
-            )
-
-        if self._inputs.state.lidar_scan is not None:
-            cv.imshow(self.LIDAR_WINDOW, self._make_lidar_view())
 
         cv.waitKey(1)
 

@@ -81,7 +81,7 @@ def reached_gate(ctx):
     return _dist_to_gate(ctx) < GATE_ZONE_RADIUS_M and ctx.phase == 1
 
 GREEN_SLOW_DIST_CM = 500 # 5m
-GREEN_SLOW_FRAMES = 45 # 0.5 second at 60fps
+GREEN_SLOW_FRAMES = 60 # 1.0 second at 60fps
 
 def green_nearby(ctx):
     return ctx.phase == 3 and ctx.green_detected and ctx.depth_center_cm < GREEN_SLOW_DIST_CM
@@ -130,9 +130,7 @@ def stop_at_gate(ctx):
 
     return Status.SUCCESS
 
-DOOR_GO_ANGLE_DEG = 43.0  # rush when blades at this angle
-DOOR_GO_TOLERANCE_DEG = 3.0  # ±tolerance
-DOOR_STABLE_FRAMES = 3  # must be in range for this many consecutive frames
+from util.constants import DOOR_GO_ANGLE_DEG, DOOR_GO_TOLERANCE_DEG, DOOR_STABLE_FRAMES
 
 def wait_for_gate(ctx):
     if not hasattr(ctx, '_door_stable_count'):
@@ -163,6 +161,11 @@ def wait_for_gate(ctx):
 def pass_gate(ctx):
     _pure_pursuit(ctx)
     ctx.speed = 1.0 # full speed when passing through the gate
+    ctx.angle *= 1.3  # moderate steering through gate
+    ctx.angle = max(-1.0, min(1.0, ctx.angle))
+    if not getattr(ctx, '_pass_gate_printed', False):
+        print(f"[BT] pass_gate ACTIVE, speed={ctx.speed}")
+        ctx._pass_gate_printed = True
     dist = _dist_to_gate(ctx)
     if dist > GATE_EXIT_DIST_M:
         ctx.phase = 3
@@ -182,9 +185,9 @@ def slow_for_green(ctx):
     ctx._green_slow_counter += 1
     _pure_pursuit(ctx)
     if ctx._green_slow_counter <= GREEN_SLOW_FRAMES:
-        ctx.speed *= 0.5
+        ctx.speed *= 0.25
         if ctx._green_slow_counter == 1:
-            print("[BT] green detected < 5m, slowing to 0.5")
+            print("[BT] green detected < 5m, slowing to 0.25")
     else:
         if ctx._green_slow_counter == GREEN_SLOW_FRAMES + 1:
             print("[BT] green slowdown done, back to 1.0")
@@ -213,6 +216,13 @@ def _reset_all(ctx):
 
 def follow_path(ctx):
     _pure_pursuit(ctx)
+    if ctx.phase == 3:
+        ctx.angle *= 1.7
+        ctx.angle = max(-1.0, min(1.0, ctx.angle))
+        if abs(ctx.angle) > 0.7:
+            ctx.speed = 0.7
+        else:
+            ctx.speed = 1.0
     return Status.SUCCESS
 
 def slow_for_gate_approach(ctx):
