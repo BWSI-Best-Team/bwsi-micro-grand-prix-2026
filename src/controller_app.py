@@ -146,6 +146,8 @@ class GrandPrixController:
         self._planning_done = False
         self._start_detected = False
 
+        self._do_planning()
+
     def _detect_start_position(self):
         color_img = self._rc.camera.get_color_image_no_copy()
         depth_img = self._rc.camera.get_depth_image()
@@ -394,16 +396,21 @@ class GrandPrixController:
         self._pose_estimator.update_speed_from_position(x_m, y_m, ctx.dt)
         ctx.v_fwd = self._pose_estimator.speed_mps
 
-        # update last position
+        # update last position + out-of-bounds detection
+        b = self._icp_loc.map.bounds
+        out_of_bounds = (x_m < b[0] - 1 or x_m > b[1] + 1 or
+                         y_m < b[2] - 1 or y_m > b[3] + 1)
         if hasattr(ctx, '_last_x'):
             jump = math.hypot(x_m - ctx._last_x, y_m - ctx._last_y)
-            ctx._reset_detected = jump > 5.0
+            ctx._reset_detected = jump > 5.0 or out_of_bounds
             if ctx._reset_detected:
-                # reset always goes to position A
                 self._planning_done = False
                 self._icp_loc.initialize_at(START_XY_A[0], START_XY_A[1], 0.0)
         else:
-            ctx._reset_detected = False
+            ctx._reset_detected = out_of_bounds
+            if out_of_bounds:
+                self._planning_done = False
+                self._icp_loc.initialize_at(START_XY_A[0], START_XY_A[1], 0.0)
         ctx._last_x, ctx._last_y = x_m, y_m
         # door angle
         ctx.door_angle_rad = self._door_tracker.estimate_angle(
@@ -433,8 +440,8 @@ class GrandPrixController:
 
     def _show_visualizer(self) -> None:
         import os, sys
-        if sys.platform != "darwin" and os.environ.get("DISPLAY") is None:
-            return  # headless (no X11), skip cv2 GUI
+        if not os.environ.get("DISPLAY") and sys.platform != "darwin":
+            return
 
         if self._path_preview_img is not None:
             self._show_path_window()
