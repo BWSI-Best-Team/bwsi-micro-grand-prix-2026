@@ -32,7 +32,7 @@ class DoorTracker:
 
         for i in range(N):
             dist_cm = lidar_scan[i]
-            if dist_cm <= 0:
+            if dist_cm <= 0 or dist_cm > 10000 or not math.isfinite(dist_cm):
                 continue
 
             # LiDAR point -> world coordinates

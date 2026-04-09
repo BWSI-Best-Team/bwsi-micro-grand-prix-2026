@@ -12,6 +12,8 @@ docs/
 
 # Training data
 *.npy
+!data/track_map.npy
+!data/track_map_inference2.npy
 *.csv
 *.log
 *.tgz

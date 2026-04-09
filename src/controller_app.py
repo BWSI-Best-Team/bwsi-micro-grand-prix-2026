@@ -71,17 +71,12 @@ class GrandPrixController:
         # ICP uses clean map (not nav map)
         _icp_map_path = DATA_DIR / "track_map_inference2.npy"
         if _icp_map_path.exists():
-            grid_raw = np.load(str(_icp_map_path)) > 0
+            grid = np.load(str(_icp_map_path)) > 0
         else:
-            grid_raw = self._path_track_map.grid > 0  # fallback
-        grid_raw = grid_raw[::-1]  # flip row order
+            grid = self._path_track_map.grid > 0
+        grid = np.ascontiguousarray(grid[::-1])  # flip row order
         origin = (meta["world_min_x_m"], meta["world_min_z_m"])
         res = meta["resolution_m_per_px"]
-        ds = 2
-        h, w = grid_raw.shape
-        h2, w2 = (h // ds) * ds, (w // ds) * ds
-        grid = grid_raw[:h2, :w2].reshape(h2 // ds, ds, w2 // ds, ds).any(axis=(1, 3))
-        res = res * ds
 
         # bake doors into grid as walls
         ox, oz = origin
@@ -404,11 +399,9 @@ class GrandPrixController:
             jump = math.hypot(x_m - ctx._last_x, y_m - ctx._last_y)
             ctx._reset_detected = jump > 5.0
             if ctx._reset_detected:
-                # reset re-detect + re-plan
+                # reset always goes to position A
                 self._planning_done = False
-                start = self._detect_start_position()
-                self._icp_loc.initialize_at(start[0], start[1], 0.0)
-                print(f"[RESET] re-init ICP + re-plan from {start}")
+                self._icp_loc.initialize_at(START_XY_A[0], START_XY_A[1], 0.0)
         else:
             ctx._reset_detected = False
         ctx._last_x, ctx._last_y = x_m, y_m
