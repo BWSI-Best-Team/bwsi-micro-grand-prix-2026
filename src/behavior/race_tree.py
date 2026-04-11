@@ -176,6 +176,7 @@ def pass_gate(ctx):
 
 def do_reset(ctx):
     _reset_all(ctx)
+    ctx._reset_detected = True
     ctx.speed = 0.0
     ctx.angle = 0.0
     return Status.SUCCESS

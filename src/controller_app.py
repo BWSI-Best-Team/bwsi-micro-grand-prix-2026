@@ -483,6 +483,10 @@ class GrandPrixController:
         ctx.speed, ctx.angle = 0.0, 0.0
         self._bt.tick(ctx)
 
+        if getattr(ctx, "_reset_detected", False):
+            self._icp_loc.pose = None
+            self._pose_estimator.reset()
+
         return DriveCommand(speed=ctx.speed, angle=ctx.angle)
 
     def _show_visualizer(self) -> None:
