@@ -22,15 +22,16 @@ START_RESET_RADIUS_M = 2.0  # if car is within this radius of start -> sim reset
 WALL_STOP_CM = 50 # emergency stop distance
 OBSTACLE_SLOW_CM = 150  # start slowing down
 GATE_APPROACH_RADIUS_M = 10.0 # start reducing speed
-GATE_ZONE_RADIUS_M = 1.5 # enter creep mode
+GATE_ZONE_RADIUS_M = 3.0 # enter creep mode
 GATE_STOP_M = 0.3 # stop this far from gate target
 GATE_EXIT_REACHED_M = 1.0 # near gate exit waypoint -> phase 3
-DOOR_GO_ANGLE_DEG = 47.2  # rush when blades at this angle
+DOOR_GO_ANGLE_DEG = 44.5  # rush when blades at this angle
 DOOR_GO_TOLERANCE_DEG = 1.5  # +-tolerance
 DOOR_STABLE_FRAMES = 2  # frames
 
 # stopper PID
 STOPPER_TARGET_CM = 20     # PID stop distance (cm)
+STOPPER_FINE_TUNE_M = 0.35
 STOPPER_MAX_SPEED_MS = 3.0
 
 # path tracker
@@ -43,6 +44,7 @@ INFLATE_M = 0.45            # default wall inflation
 GATE_INFLATE_M = 0.25       # tighter inflation for gate segment
 PHASE3_INFLATE_M = 0.55     # phase 3 for extra 0.2 inflation for safety
 CORNER_EXTRA_M = 0.35       # extra inflation at sharp corners
+PHASE3_CORNER_EXTRA_M = 0.55
 
 # smoothing
 SAVGOL_WINDOW_M = 8.0       # smoothing window length

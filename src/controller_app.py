@@ -191,7 +191,7 @@ class GrandPrixController:
         self._cached_start_xy = start_xy
         points = [start_xy, GATE_ENTER_XY, GATE_EXIT_XY, GOAL_XY]
         gate_cfg = GlobalPathConfig(inflate_m=GATE_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
-        phase3_cfg = GlobalPathConfig(inflate_m=PHASE3_INFLATE_M, corner_extra_m=CORNER_EXTRA_M)
+        phase3_cfg = GlobalPathConfig(inflate_m=PHASE3_INFLATE_M, corner_extra_m=PHASE3_CORNER_EXTRA_M)
         cfgs = [None, gate_cfg, phase3_cfg]
         print(f"[INFO] Global Planner: {' -> '.join(str(p) for p in points)}")
         waypoints = compute_multi_segment_path(self._path_track_map, points, cfgs)
@@ -208,8 +208,7 @@ class GrandPrixController:
             pass
 
     def update(self) -> None:
-        # speed hack for phase 2+3
-        if ENABLE_SIM_SPEED_HACK and self._bt_ctx.phase >= 2:
+        if ENABLE_SIM_SPEED_HACK:
             import struct
             if hasattr(self._rc, "_RacecarSim__send_data"):
                 self._rc._RacecarSim__send_data(
@@ -460,9 +459,12 @@ class GrandPrixController:
             ctx._reset_detected = False
         ctx._last_x, ctx._last_y = x_m, y_m
         # door angle
-        ctx.door_angle_rad = self._door_tracker.estimate_angle(
-            ctx.lidar, x_m, y_m, yaw
-        )
+        if math.isfinite(x_m) and math.isfinite(y_m) and math.isfinite(yaw):
+            ctx.door_angle_rad = self._door_tracker.estimate_angle(
+                ctx.lidar, x_m, y_m, yaw
+            )
+        else:
+            ctx.door_angle_rad = None
         # green detection
         self._color_detector.update(
             self._inputs.state.color_image, colors=[("GREEN", GREEN)]

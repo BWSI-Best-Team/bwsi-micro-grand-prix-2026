@@ -83,7 +83,7 @@ def reached_gate(ctx):
     return _dist_to_gate(ctx) < GATE_ZONE_RADIUS_M and ctx.phase == 1
 
 GREEN_SLOW_DIST_CM = 500 # 5m
-GREEN_SLOW_FRAMES = 60 # 1.0 second at 60fps
+GREEN_SLOW_FRAMES = 45
 
 def green_nearby(ctx):
     return ctx.phase == 3 and ctx.green_detected and ctx.depth_center_cm < GREEN_SLOW_DIST_CM
@@ -100,11 +100,13 @@ def passing_gate(ctx):
 
 def stop_at_gate(ctx):
     dist = _dist_to_gate(ctx)
+    dist_cm = dist * 100.0
 
     if not getattr(ctx, '_gate_active', False):
         ctx._gate_active = True
         ctx._gate_locked = False
         ctx._gate_stop_frames = 0
+        ctx.stopper.reset()
         print(f"[BT] gate zone, creeping to target (dist={dist:.2f}m)")
 
     # changed to phase 2 once stopped
@@ -118,17 +120,17 @@ def stop_at_gate(ctx):
 
     _pure_pursuit(ctx)
 
-    if dist < GATE_STOP_M:
+    throttle = ctx.stopper.update(dist_cm, ctx.v_fwd, ctx.dt)
+    ctx.speed = throttle
+    ctx.angle = max(-0.3, min(0.3, ctx.angle))
+
+    if ctx.stopper.stopped:
         ctx.speed = 0.0
         ctx.angle = 0.0
         ctx._gate_stop_frames += 1
-        # wait for 15 frames to let car completely stop
         if ctx._gate_stop_frames > 15:
             ctx._gate_locked = True
             print(f"[BT] stopped at gate (dist={dist:.2f}m)")
-    else:
-        ctx.speed = min(0.2, (dist - GATE_STOP_M) * 0.15)
-        ctx.angle = max(-0.3, min(0.3, ctx.angle))
 
     return Status.SUCCESS
 
@@ -218,11 +220,16 @@ def _reset_all(ctx):
     print("[BT] sim reset detected, back to Phase 1")
 
 def follow_path(ctx):
-    _pure_pursuit(ctx)
     if ctx.phase == 3:
-        ctx.angle *= 2.5
+        orig_slow = ctx.tracker._slow
+        ctx.tracker._slow = 0.85
+        _pure_pursuit(ctx)
+        ctx.tracker._slow = orig_slow
+        ctx.speed *= 0.6
+        ctx.angle *= 1.5
         ctx.angle = max(-1.0, min(1.0, ctx.angle))
-        ctx.speed *= 0.5
+    else:
+        _pure_pursuit(ctx)
     return Status.SUCCESS
 
 def slow_for_gate_approach(ctx):
