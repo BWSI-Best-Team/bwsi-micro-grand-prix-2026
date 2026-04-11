@@ -162,14 +162,14 @@ def wait_for_gate(ctx):
 
 def pass_gate(ctx):
     _pure_pursuit(ctx)
-    dist = _dist_to_gate(ctx)
+    exit_dist = math.hypot(ctx.x - GATE_EXIT_XY[0], ctx.y - GATE_EXIT_XY[1])
     ctx.speed = 1.0 # full speed when passing through the gate
     ctx.angle *= 1.0
     ctx.angle = max(-1.0, min(1.0, ctx.angle))
     if not getattr(ctx, '_pass_gate_printed', False):
         print(f"[BT] pass_gate ACTIVE, speed={ctx.speed}")
         ctx._pass_gate_printed = True
-    if dist > GATE_EXIT_DIST_M:
+    if exit_dist < GATE_EXIT_REACHED_M:
         ctx.phase = 3
         print("[BT] Phase 3: normal driving to finish")
     return Status.SUCCESS
