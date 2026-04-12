@@ -25,7 +25,4 @@ This codebase contains a controller for the BWSI 2026 Micro Grand Prix Pre-Comp
 
 ## Architecture
 
-The controller logic is split amongst numerous modules
-
-- `src/main.py`: thin entry point, bootstrap controller & manage `vendor` and `library` imports
-- `src/controller_app.py`: top-level controller, directly manages RACECAR
+Basically inspired by the ROS2 Nav2
