@@ -83,7 +83,7 @@ def reached_gate(ctx):
     return _dist_to_gate(ctx) < GATE_ZONE_RADIUS_M and ctx.phase == 1
 
 GREEN_SLOW_DIST_CM = 500 # 5m
-GREEN_SLOW_FRAMES = 45
+GREEN_SLOW_FRAMES = 60
 
 def green_nearby(ctx):
     return ctx.phase == 3 and ctx.green_detected and ctx.depth_center_cm < GREEN_SLOW_DIST_CM
@@ -190,9 +190,9 @@ def slow_for_green(ctx):
     ctx._green_slow_counter += 1
     _pure_pursuit(ctx)
     if ctx._green_slow_counter <= GREEN_SLOW_FRAMES:
-        ctx.speed *= 0.25
+        ctx.speed *= 0.20
         if ctx._green_slow_counter == 1:
-            print("[BT] green detected < 5m, slowing to 0.25")
+            print("[BT] green detected < 5m, slowing to 0.20")
     else:
         if ctx._green_slow_counter == GREEN_SLOW_FRAMES + 1:
             print("[BT] green slowdown done, back to 1.0")
