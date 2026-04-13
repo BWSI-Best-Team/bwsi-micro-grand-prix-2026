@@ -4,21 +4,6 @@
 
 Autonomous racing controller for the BWSI 2026 Micro Grand Prix Pre-Competition. The car navigates a complex indoor track in three phases: approach a spinning revolving door, time the pass-through, then sprint to the finish.
 
-## Competition Calendar
-
-| Date | Event |
-| :--- | :--- |
-| 3/21 – 4/1 | Pre-Dev: Algorithm development |
-| **3/30 (Mon)** | **BWSI Application Deadline**: Submit by 8:59 PM PT |
-| **4/1 (Wed)** | **Registration Deadline**: [Intent to Compete Form](https://forms.gle/B98we9rZGydtAgRQ8) due 11:59 PM PT |
-| 4/1 (Wed) | **Map Release**: New competition map released |
-| 4/2 – 4/8 | Development Week: Test and tuning |
-| **4/3 (Fri)** | **Teacher Recommendation Deadline**: Due by 8:59 PM PT |
-| 4/9 – 4/11 | Code Adjudication: Team reviews code for violations |
-| **4/12 (Sun)** | **Finals**: 12:00 PM – 1:00 PM PT via Zoom |
-
----
-
 ## Quick Start
 
 ```bash
@@ -34,7 +19,18 @@ racecar sim src/main.py
 #racecar sim src/test.py
 ```
 
----
+## Competition Calendar
+
+| Date | Event |
+| :--- | :--- |
+| 3/21 – 4/1 | Pre-Dev: Algorithm development |
+| **3/30 (Mon)** | **BWSI Application Deadline**: Submit by 8:59 PM PT |
+| **4/1 (Wed)** | **Registration Deadline**: [Intent to Compete Form](https://forms.gle/B98we9rZGydtAgRQ8) due 11:59 PM PT |
+| 4/1 (Wed) | **Map Release**: New competition map released |
+| 4/2 – 4/8 | Development Week: Test and tuning |
+| **4/3 (Fri)** | **Teacher Recommendation Deadline**: Due by 8:59 PM PT |
+| 4/9 – 4/11 | Code Adjudication: Team reviews code for violations |
+| **4/12 (Sun)** | **Finals**: 12:00 PM – 1:00 PM PT via Zoom |
 
 ## Track Map
 
@@ -108,4 +104,3 @@ flowchart LR
 ## Side Notes
 
 - Emergency stop logic existed but the trigger range was not tuned for high speed (1.8), which caused a collision during the final
-- A velocity-aware stopping threshold should be added in the next revision
