@@ -1,5 +1,7 @@
 # BWSI 2026 Micro Grand Prix
 
+**1st Place - BWSI 2026 Micro Grand Prix Finals (April 12, 2026) 🥇**
+
 Autonomous racing controller for the BWSI 2026 Micro Grand Prix Pre-Competition. The car navigates a complex indoor track in three phases: approach a spinning revolving door, time the pass-through, then sprint to the finish.
 
 ## Competition Calendar
