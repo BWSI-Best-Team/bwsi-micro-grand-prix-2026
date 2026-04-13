@@ -88,6 +88,7 @@ flowchart LR
 - [Control](doc/control.md): Pure Pursuit, stopper PID, simulator speed hack
 - [Behavior](doc/behavior.md): behavior tree framework, race phases, reset detection
 - [Training](doc/training.md): ML pose estimator, data collection, CNN architecture
+- [Configuration](doc/configuration.md): constants.py tuning parameters, controller_config.json toggles
 
 ---
 
