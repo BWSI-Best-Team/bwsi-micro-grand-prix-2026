@@ -76,6 +76,21 @@ flowchart LR
     A --> B --> C --> D --> E
     E -. loop .-> A
 ```
+---
+
+
+
+## Detailed Docs
+
+- [Perception](doc/perception.md): sensors, door tracker, color/depth detection, start position
+- [Localization](doc/localization.md): ICP, EKF, IMU fallback, map manager
+- [Planning](doc/planning.md): Dijkstra, path smoothing, costmap inflation, track map
+- [Control](doc/control.md): Pure Pursuit, stopper PID, simulator speed hack
+- [Behavior](doc/behavior.md): behavior tree framework, race phases, reset detection
+- [Training](doc/training.md): ML pose estimator, data collection, CNN architecture
+
+---
+
 
 ### Startup (`start()`)
 
@@ -85,3 +100,5 @@ flowchart LR
 - Detect start position A or B via orange color
 - Plan global path: Dijkstra → resample → Savitzky-Golay smooth
 - Open run log (`tmp/run_log.csv`)
+
+---
