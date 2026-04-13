@@ -31,10 +31,18 @@ Precomputes a Euclidean distance field from the occupancy grid using `scipy.ndim
 
 ## Fallback chain
 
-```
-ICP available and confident  →  use ICP + EKF pose
-ICP lost (15 bad frames)     →  use EKF prediction only
-No lidar at all              →  IMU dead-reckoning (PoseEstimator)
+```mermaid
+flowchart TD
+    A[Lidar scan arrives] --> B[Mask door region]
+    B --> C[ICP: align scan to map]
+    C --> D{ICP fitness OK?}
+    D -- Yes --> E[EKF update with ICP correction]
+    D -- No, 15+ bad frames --> F[EKF predict only\nno measurement update]
+    E --> G[Pose estimate]
+    F --> G
+    G --> H{Lidar available?}
+    H -- No --> I[IMU dead-reckoning\ngyro + double-integrate accel]
+    I --> G
 ```
 
 IMU dead-reckoning (`src/perception/pose_estimator.py`) integrates gyro → yaw and double-integrates accelerometer → position. It drifts over time but is good enough for short gaps.

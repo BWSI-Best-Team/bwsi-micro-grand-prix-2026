@@ -4,6 +4,17 @@ Path planning runs once at startup (and again on reset). It produces a smooth gl
 
 ## Pipeline (`src/planning/global_planner/global_path.py`)
 
+```mermaid
+flowchart LR
+    A[Occupancy grid\ntrack_map.npy] --> B[Inflate walls\nper-segment margins]
+    B --> C[Downsample\n0.15 m/cell]
+    C --> D[Dijkstra\nshortest path]
+    D --> E[Resample\n0.10 m spacing]
+    E --> F[Savitzky-Golay smooth\n2 passes, 8 m window]
+    F --> G[Compute yaw\nfinite differences]
+    G --> H[Smooth global path]
+```
+
 1. **Costmap**: inflate the occupancy grid walls by a configurable margin. This gives the path a safety buffer from walls. Different margins are used for different segments (tighter near the revolving door, wider for Phase 3).
 2. **Dijkstra**: find the shortest path on a downsampled 0.15 m/cell grid. We use Dijkstra rather than A* because the costmap cells already encode traversal cost from wall proximity.
 3. **Resample**: interpolate the raw grid path at 0.10 m spacing so the tracker has dense waypoints.
