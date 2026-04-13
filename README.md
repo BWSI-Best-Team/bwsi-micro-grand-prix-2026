@@ -64,17 +64,57 @@ racecar sim src/test.py
 
 ## Architecture
 
-Inspired by ROS2 Nav2. The system follows a sense → localize → plan → decide → act pipeline.
+Inspired by ROS2 Nav2. The system follows a plan -> sense -> localize -> perceive -> decide -> control pipeline.
 
 ```mermaid
 flowchart LR
-    A["<b>1. Sense</b> — InputManager<br/>color_image, depth_image<br/>lidar_scan (720 beams, 360°)<br/>imu (accel, gyro)"]
-    B["<b>2. Localize</b> — ICP + EKF<br/>ICP aligns lidar to map<br/>EKF fuses motion + ICP<br/>Fallback: IMU dead-reckoning"]
-    C["<b>3. Perceive</b> — parallel<br/>DoorTracker → blade angle<br/>ColorDetector → name, px, area<br/>DepthDetector → distance"]
-    D["<b>4. Decide</b> — behavior tree (race_tree.py)<br/>Context: phase, pose, velocity, sensors<br/>Priority fallback (first match wins):<br/>1. Sim reset → re-initialize<br/>2. Path finished → stop<br/>3. Wall &lt; 50 cm → emergency stop<br/>4. Phase 1 in gate → stopper PID<br/>5. Phase 1 approaching → ramp down<br/>6. Phase 2 waiting → watch door<br/>7. Phase 2 passing → full speed<br/>8. Phase 3 green → slow to 0.2<br/>9. Obstacle ahead → adaptive slowdown<br/>10. Default → pure pursuit"]
-    E["<b>5. Act</b><br/>drive.set_speed_angle(speed, angle)"]
-    A --> B --> C --> D --> E
+    A["Sense<br/>InputManager"] --> B["Localize<br/>ICP + EKF"]
+    A --> C["Perceive<br/>Door / Color / Depth"]
+    B --> C
+    C --> D["Decide<br/>Behavior Tree"]
+    D --> E["Control<br/>Pure Pursuit"]
     E -. loop .-> A
+    P["Plan<br/>Dijkstra"] -. init / reset .-> E
+```
+
+| Stage | Module | Responsibility |
+| :--- | :--- | :--- |
+| **Plan** | `global_planner` | Compute initial global path using Dijkstra (no local planner as it is unnecessary for this track) |
+| **Sense** | `InputManager` | Collect synchronized color, depth, lidar, and IMU data |
+| **Localize** | ICP + EKF | Estimate vehicle pose by scan-to-map matching and motion fusion |
+| **Perceive** | `DoorTracker` / `ColorDetector` / `DepthDetector` | Extract task-relevant scene state from sensor data |
+| **Decide** | `race_tree` | Select the active behavior based on safety and mission state |
+| **Control** | `PurePursuitTracker` | Track the planned path and output steering and speed commands |
+
+### Behavior tree
+
+Each frame checks left to right, first match executes, rest skipped:
+
+```mermaid
+flowchart LR
+    subgraph Safety
+        S1["Car reset?<br/>Restart"]
+        S2["Reached end?<br/>Stop"]
+        S3["Too close to wall?<br/>Emergency stop"]
+    end
+
+    subgraph Phase1["Phase 1: To Door"]
+        A1["Reached gate?<br/>PID stop at target"]
+        A2["Approaching gate?<br/>Proportional slowdown"]
+    end
+
+    subgraph Phase2["Phase 2: Door"]
+        B1["Door not open?<br/>Wait"]
+        B2["Door open?<br/>Go full speed"]
+    end
+
+    subgraph Phase3["Phase 3: Finish"]
+        C1["See green?<br/>Slow down"]
+    end
+
+    D["Follow path"]
+
+    Safety -->|no match| Phase1 -->|no match| Phase2 -->|no match| Phase3 -->|no match| D
 ```
 
 ### Startup (`start()`)
@@ -85,3 +125,10 @@ flowchart LR
 - Detect start position A or B via orange color
 - Plan global path: Dijkstra → resample → Savitzky-Golay smooth
 - Open run log (`tmp/run_log.csv`)
+
+---
+
+## Side Notes
+
+- Emergency stop logic existed but the trigger range was not tuned for high speed (1.8), which caused a collision during the final
+- A velocity-aware stopping threshold should be added in the next revision
